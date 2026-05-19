@@ -11,9 +11,8 @@ from src.ingest import (
     build_ingest_graph,
     chunk_source_node,
     extract_text_node,
-    generate_pages_node,
+    process_batches_node,
     run_ingest,
-    write_pages_node,
 )
 from src.models import Confidence, GeneratedPage, IngestResult, PageType
 
@@ -102,60 +101,43 @@ class TestChunkSourceNode:
         assert "errors" in result
 
 
-class TestGeneratePagesNode:
+class TestProcessBatchesNode:
     @pytest.mark.asyncio
-    async def test_generates_pages(self, mock_ingest_result: IngestResult) -> None:
-        state = {
-            "chunks": ["Some source text about transformers and BERT."],
-            "source_path": "test.txt",
-            "source_title": "Test Source",
-        }
-
-        with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm:
-            mock_llm.return_value = mock_ingest_result
-            result = await generate_pages_node(state)
-
-        assert "generated_pages" in result
-        assert len(result["generated_pages"]) == 3  # summary + 1 concept + 1 entity
-
-    @pytest.mark.asyncio
-    async def test_empty_chunks_returns_error(self) -> None:
-        state = {"chunks": [], "source_path": "test.txt"}
-        result = await generate_pages_node(state)
-        assert "errors" in result
-
-
-class TestWritePagesNode:
-    @pytest.mark.asyncio
-    async def test_writes_pages(
+    async def test_single_batch(
         self, tmp_path: Path, mock_ingest_result: IngestResult, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         wiki_dir = tmp_path / "wiki"
         wiki_dir.mkdir()
-
-        # Point settings to tmp wiki dir
+        checkpoint_dir = tmp_path / "checkpoints"
         monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
         import src.config
 
         src.config._settings = None
 
         state = {
-            "generated_pages": [
-                mock_ingest_result.source_summary,
-                *mock_ingest_result.concept_pages,
-            ],
+            "chunks": ["Some source text about transformers and BERT."],
             "source_path": "test.txt",
+            "source_title": "Test Source",
+            "fresh": True,
         }
 
-        result = await write_pages_node(state)
-        assert "written_paths" in result
-        assert len(result["written_paths"]) == 2
+        with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = mock_ingest_result
+            result = await process_batches_node(state)
 
-        # Verify files exist
-        for path in result["written_paths"]:
-            assert (wiki_dir / path).exists()
+        assert "written_paths" in result
+        assert len(result["written_paths"]) == 3
+        # Checkpoint should be deleted after completion
+        assert not list(checkpoint_dir.glob("*.json"))
 
         src.config._settings = None
+
+    @pytest.mark.asyncio
+    async def test_empty_chunks_returns_error(self) -> None:
+        state = {"chunks": [], "source_path": "test.txt"}
+        result = await process_batches_node(state)
+        assert "errors" in result
 
 
 # ── Integration test ─────────────────────────────────────────────────────────
@@ -172,8 +154,10 @@ class TestRunIngest:
     ) -> None:
         wiki_dir = tmp_path / "wiki"
         wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
 
         monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
         import src.config
 
         src.config._settings = None
