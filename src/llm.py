@@ -24,7 +24,20 @@ def _get_providers() -> list[tuple[str, str, dict[str, str]]]:
     settings = get_settings()
     providers: list[tuple[str, str, dict[str, str]]] = []
 
-    # Groq (highest priority — fastest inference)
+    # MiniMax (highest priority)
+    if settings.minimax_api_key.get_secret_value():
+        providers.append(
+            (
+                settings.minimax_model,
+                "minimax",
+                {
+                    "api_key": settings.minimax_api_key.get_secret_value(),
+                    "api_base": settings.minimax_api_base,
+                },
+            )
+        )
+
+    # Groq
     if settings.groq_api_key.get_secret_value():
         providers.append(
             (
@@ -63,7 +76,7 @@ async def complete_structured(  # noqa: UP047
 ) -> T:
     """Call LLM with fallback chain and return structured Pydantic output.
 
-    Tries providers in order: Groq → Gemini → Ollama.
+    Tries providers in order: MiniMax → Groq → Gemini → Ollama.
     Uses instructor for structured output extraction.
     """
     providers = _get_providers()
@@ -75,8 +88,8 @@ async def complete_structured(  # noqa: UP047
 
     for model, name, kwargs in providers:
         try:
-            # Ollama: use JSON mode — tool calling fails with complex nested models
-            mode = instructor.Mode.JSON if name == "ollama" else instructor.Mode.TOOLS
+            # JSON mode for providers where tool calling is incompatible
+            mode = instructor.Mode.JSON if name in {"ollama", "minimax"} else instructor.Mode.TOOLS
             client = instructor.from_litellm(litellm.acompletion, mode=mode)
 
             result = await client.chat.completions.create(
