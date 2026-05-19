@@ -13,6 +13,7 @@ from langgraph.graph import END, StateGraph
 from src.config import get_settings
 from src.extract import chunk_text, extract_source
 from src.llm import complete_structured
+from src.merge import merge_page
 from src.models import (
     Checkpoint,
     IngestResult,
@@ -122,6 +123,7 @@ def _build_batch_messages(
         user_content += (
             f"\n\nThe following wiki pages already exist: {', '.join(existing_titles)}"
             "\nLink to them using [[Title]] syntax where relevant."
+            "\nDo NOT create new pages that duplicate these titles — use [[Title]] links instead."
         )
 
     return [
@@ -216,21 +218,28 @@ async def process_batches_node(state: IngestState) -> IngestState:
 
             all_pages = [result.source_summary, *result.concept_pages, *result.entity_pages]
 
-            # Write pages
+            # Write pages (merge if title already exists on disk)
             today = date.today()
             batch_titles: list[str] = []
             for gen_page in all_pages:
-                fm = WikiFrontmatter(
-                    title=gen_page.title,
-                    page_type=gen_page.page_type,
-                    sources=[source_path],
-                    tags=gen_page.tags,
-                    created=today,
-                    updated=today,
-                    confidence=gen_page.confidence,
-                    related=[title_to_path(t) for t in gen_page.related_titles],
-                )
-                path = write_page(fm, gen_page.body, settings.wiki_dir)
+                existing_page = get_page_by_title(gen_page.title, settings.wiki_dir)
+                if existing_page is not None:
+                    merged_fm, merged_body = await merge_page(
+                        existing_page, gen_page, source_path,
+                    )
+                    path = write_page(merged_fm, merged_body, settings.wiki_dir)
+                else:
+                    fm = WikiFrontmatter(
+                        title=gen_page.title,
+                        page_type=gen_page.page_type,
+                        sources=[source_path],
+                        tags=gen_page.tags,
+                        created=today,
+                        updated=today,
+                        confidence=gen_page.confidence,
+                        related=[title_to_path(t) for t in gen_page.related_titles],
+                    )
+                    path = write_page(fm, gen_page.body, settings.wiki_dir)
                 all_written.append(path)
                 batch_titles.append(gen_page.title)
 

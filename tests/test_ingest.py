@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -16,7 +16,16 @@ from src.ingest import (
     process_batches_node,
     run_ingest,
 )
-from src.models import Checkpoint, Confidence, GeneratedPage, IngestResult, PageType
+from src.models import (
+    Checkpoint,
+    Confidence,
+    GeneratedPage,
+    IngestResult,
+    MergedPage,
+    PageType,
+    WikiFrontmatter,
+)
+from src.wiki import read_page, write_page
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -294,3 +303,57 @@ class TestBuildIngestGraph:
         graph = build_ingest_graph()
         app = graph.compile()
         assert app is not None
+
+
+class TestProcessBatchesMerge:
+    @pytest.mark.asyncio
+    async def test_merges_when_page_already_exists(
+        self, tmp_path: Path, mock_ingest_result: IngestResult, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        # Pre-create existing page with same title as mock's entity page ("BERT")
+        existing_fm = WikiFrontmatter(
+            title="BERT",
+            page_type=PageType.ENTITY,
+            sources=["old/source.pdf"],
+            tags=["nlp"],
+            created=date(2026, 1, 1),
+            updated=date(2026, 1, 1),
+            confidence=Confidence.HIGH,
+        )
+        write_page(existing_fm, "# BERT\n\nOld content about BERT.", wiki_dir)
+
+        state = {
+            "chunks": ["Source text about BERT and transformers."],
+            "source_path": "new-source.txt",
+            "source_title": "New Source",
+            "fresh": True,
+        }
+
+        mock_merged = MergedPage(
+            body="# BERT\n\nMerged content combining old and new.",
+            tags=["nlp", "pre-training"],
+            confidence=Confidence.HIGH,
+        )
+
+        with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm, \
+             patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm:
+            mock_llm.return_value = mock_ingest_result
+            mock_merge_llm.return_value = mock_merged
+            result = await process_batches_node(state)
+
+        assert "errors" not in result or len(result.get("errors", [])) == 0
+        # Verify BERT page was merged (not just overwritten)
+        bert_page = read_page("bert.md", wiki_dir)
+        assert "old" in bert_page.frontmatter.sources or "new-source.txt" in bert_page.frontmatter.sources
+        assert bert_page.frontmatter.created == date(2026, 1, 1)  # preserved
+
+        src.config._settings = None
