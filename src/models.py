@@ -77,6 +77,22 @@ class MergedPage(BaseModel):
     confidence: Confidence = Field(default=Confidence.MEDIUM)
 
 
+class EditOp(BaseModel):
+    """Single edit operation: exact string replacement."""
+
+    old_string: str = Field(description="Exact text from existing body to replace, must be unique")
+    new_string: str = Field(description="Replacement text. Empty string = deletion")
+    replace_all: bool = Field(default=False, description="True to replace all occurrences")
+
+
+class PatchedPage(BaseModel):
+    """LLM output: a batch of edit operations + metadata delta."""
+
+    edits: list[EditOp] = Field(description="Edit operations to apply in order")
+    tags_to_add: list[str] = Field(default_factory=list, description="Tags to add (incremental)")
+    confidence: Confidence = Confidence.MEDIUM
+
+
 class IngestResult(BaseModel):
     """LLM output: all pages to create from a single source."""
 

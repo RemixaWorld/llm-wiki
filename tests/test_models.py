@@ -136,3 +136,43 @@ class TestExtractedSource:
             title="test.txt",
         )
         assert es.metadata == {}
+
+
+class TestEditOp:
+    def test_create_edit_op(self) -> None:
+        from src.models import EditOp
+
+        op = EditOp(old_string="hello", new_string="world")
+        assert op.old_string == "hello"
+        assert op.new_string == "world"
+        assert op.replace_all is False
+
+    def test_create_edit_op_replace_all(self) -> None:
+        from src.models import EditOp
+
+        op = EditOp(old_string="foo", new_string="bar", replace_all=True)
+        assert op.replace_all is True
+
+
+class TestPatchedPage:
+    def test_create_patched_page(self) -> None:
+        from src.models import Confidence, EditOp, PatchedPage
+
+        page = PatchedPage(
+            edits=[
+                EditOp(old_string="old text", new_string="new text"),
+                EditOp(old_string="another", new_string="replacement"),
+            ],
+            tags_to_add=["transformers"],
+            confidence=Confidence.HIGH,
+        )
+        assert len(page.edits) == 2
+        assert page.tags_to_add == ["transformers"]
+        assert page.confidence == Confidence.HIGH
+
+    def test_patched_page_defaults(self) -> None:
+        from src.models import Confidence, PatchedPage
+
+        page = PatchedPage(edits=[])
+        assert page.tags_to_add == []
+        assert page.confidence == Confidence.MEDIUM
