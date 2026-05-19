@@ -75,16 +75,25 @@ def _fuzzy_replace(body: str, old_string: str, new_string: str, replace_all: boo
 
 
 def apply_edits(body: str, edits: list[EditOp]) -> str:
-    """Apply edits sequentially to an in-memory copy. Raises PatchError on any failure."""
+    """Apply edits sequentially to an in-memory copy. Raises PatchError on any failure.
+
+    For each edit, tries exact match first, then falls back to fuzzy match
+    (trailing whitespace stripping + quote normalization).
+    """
     working = body
     for i, edit in enumerate(edits):
         count = working.count(edit.old_string)
-        if count == 0:
-            raise PatchError(f"Edit #{i}: old_string not found")
-        if count > 1 and not edit.replace_all:
-            raise PatchError(f"Edit #{i}: matches {count} times, set replace_all=True")
-        if edit.replace_all:
-            working = working.replace(edit.old_string, edit.new_string)
+        if count == 1 or (count > 1 and edit.replace_all):
+            if edit.replace_all:
+                working = working.replace(edit.old_string, edit.new_string)
+            else:
+                working = working.replace(edit.old_string, edit.new_string, 1)
+        elif count == 0:
+            try:
+                working = _fuzzy_replace(working, edit.old_string, edit.new_string, edit.replace_all)
+            except PatchError:
+                raise PatchError(f"Edit #{i}: old_string not found")
         else:
-            working = working.replace(edit.old_string, edit.new_string, 1)
+            # count > 1 and not replace_all
+            raise PatchError(f"Edit #{i}: matches {count} times, set replace_all=True")
     return working

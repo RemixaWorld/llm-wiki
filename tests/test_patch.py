@@ -157,6 +157,47 @@ class TestFuzzyReplace:
         assert result == "X\nY  \nX\nY"
 
     def test_combined_trailing_ws_and_quotes(self) -> None:
-        body = "‘hello’  \nworld"
+        body = "'hello'  \nworld"
         result = _fuzzy_replace(body, "'hello'\nworld", "HI", replace_all=False)
         assert result == "HI"
+
+
+class TestApplyEditsFuzzyFallback:
+    def test_fuzzy_match_used_when_exact_fails(self) -> None:
+        """Body has trailing spaces, old_string doesn't — fuzzy fallback succeeds."""
+        body = "Hello   \nWorld"
+        edits = [EditOp(old_string="Hello\nWorld", new_string="Hi\nEarth")]
+        assert apply_edits(body, edits) == "Hi\nEarth"
+
+    def test_fuzzy_match_with_curly_quotes(self) -> None:
+        body = "He said “hello” to me"
+        edits = [EditOp(old_string='He said "hello" to me', new_string="She said goodbye")]
+        assert apply_edits(body, edits) == "She said goodbye"
+
+    def test_exact_match_preferred_no_fuzzy(self) -> None:
+        """When exact match works, fuzzy is not needed — result is exact."""
+        body = "exact match here"
+        edits = [EditOp(old_string="exact match", new_string="perfect")]
+        assert apply_edits(body, edits) == "perfect here"
+
+    def test_fuzzy_ambiguous_raises_patch_error(self) -> None:
+        body = "line1  \nline2  \nline1  \nline2"
+        edits = [EditOp(old_string="line1\nline2", new_string="x")]
+        with pytest.raises(PatchError):
+            apply_edits(body, edits)
+
+    def test_fuzzy_combined_ws_and_quotes(self) -> None:
+        body = "’hello’   \nworld  "
+        edits = [EditOp(old_string="’hello’\nworld", new_string="greetings")]
+        assert apply_edits(body, edits) == "greetings  "
+
+    def test_fuzzy_replace_all(self) -> None:
+        body = "foo  \nbar  \nfoo  \nbar"
+        edits = [EditOp(old_string="foo\nbar", new_string="X\nY", replace_all=True)]
+        assert apply_edits(body, edits) == "X\nY  \nX\nY"
+
+    def test_no_match_at_all_raises_patch_error(self) -> None:
+        body = "completely different content"
+        edits = [EditOp(old_string="not here at all", new_string="x")]
+        with pytest.raises(PatchError, match="old_string not found"):
+            apply_edits(body, edits)
