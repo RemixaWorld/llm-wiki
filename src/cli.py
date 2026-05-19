@@ -32,11 +32,12 @@ def main() -> None:
 @main.command()
 @click.argument("source")
 @click.option("--url", is_flag=True, help="Treat SOURCE as a URL instead of file path.")
-def ingest(source: str, url: bool) -> None:
+@click.option("--fresh", is_flag=True, help="Ignore checkpoint, start from scratch.")
+def ingest(source: str, url: bool, fresh: bool) -> None:
     """Ingest a source file or URL into the wiki."""
     from src.ingest import run_ingest
 
-    result = asyncio.run(run_ingest(source))
+    result = asyncio.run(run_ingest(source, fresh=fresh))
     errors = result.get("errors", [])
     written = result.get("written_paths", [])
 
@@ -53,7 +54,8 @@ def ingest(source: str, url: bool) -> None:
 
 @main.command(name="ingest-all")
 @click.option("--glob", "pattern", default="*", help="Glob pattern to match source files.")
-def ingest_all(pattern: str) -> None:
+@click.option("--fresh", is_flag=True, help="Ignore checkpoint, start from scratch.")
+def ingest_all(pattern: str, fresh: bool) -> None:
     """Ingest all matching files from the sources directory."""
 
     from src.config import get_settings
@@ -74,7 +76,7 @@ def ingest_all(pattern: str) -> None:
 
     for src_path in sources:
         click.echo(f"\nIngesting: {src_path.name}")
-        result = asyncio.run(run_ingest(str(src_path)))
+        result = asyncio.run(run_ingest(str(src_path), fresh=fresh))
         written = result.get("written_paths", [])
         errors = result.get("errors", [])
 
