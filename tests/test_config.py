@@ -116,3 +116,36 @@ def test_get_allowed_tags_from_schema(tmp_path, monkeypatch):
     assert tags == ["deep-learning", "rag"]
     src.config._schema_cache = None
     src.config._settings = None
+
+
+def test_get_edit_prompt_from_schema(tmp_path, monkeypatch):
+    """get_edit_prompt returns edit_system prompt from schema.yaml."""
+    import yaml
+    from src.config import get_edit_prompt
+
+    schema_file = tmp_path / "schema.yaml"
+    schema_file.write_text(yaml.dump({
+        "prompts": {
+            "edit_system": "Custom edit prompt for patches.",
+        }
+    }))
+    src.config._schema_cache = None
+    src.config._settings = None
+    monkeypatch.setenv("WIKI_SCHEMA_PATH", str(schema_file))
+    prompt = get_edit_prompt()
+    assert prompt == "Custom edit prompt for patches."
+    src.config._schema_cache = None
+    src.config._settings = None
+
+
+def test_get_edit_prompt_default(tmp_path, monkeypatch):
+    """get_edit_prompt returns fallback when schema has no edit_system."""
+    from src.config import get_edit_prompt
+
+    src.config._schema_cache = None
+    src.config._settings = None
+    monkeypatch.setenv("WIKI_SCHEMA_PATH", str(tmp_path / "nonexistent.yaml"))
+    prompt = get_edit_prompt()
+    assert "edit" in prompt.lower() or "patch" in prompt.lower()
+    src.config._schema_cache = None
+    src.config._settings = None

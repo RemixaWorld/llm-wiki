@@ -109,6 +109,19 @@ def get_merge_prompt() -> str:
     )
 
 
+def get_edit_prompt() -> str:
+    """Return the edit/patch system prompt from schema.yaml."""
+    schema = load_schema()
+    prompts = schema.get("prompts", {})
+    return prompts.get(
+        "edit_system",
+        "You are a knowledge engineer updating wiki pages. Compare the existing page "
+        "with new content and generate minimal edit operations. Each old_string must be "
+        "an exact verbatim snippet from the existing body (including whitespace and "
+        "newlines). Only modify what needs changing. Preserve all [[WikiLinks]].",
+    )
+
+
 def get_query_prompt() -> str:
     """Return the query system prompt from schema.yaml."""
     schema = load_schema()
