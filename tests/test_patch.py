@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.models import EditOp
-from src.patch import PatchError, _normalize_with_offsets, apply_edits
+from src.patch import PatchError, _fuzzy_replace, _normalize_with_offsets, apply_edits
 
 
 class TestApplyEditsSingleEdit:
@@ -123,3 +123,40 @@ class TestNormalizeWithOffsets:
         text = "‘hi’  \n“bye”"
         norm, offsets = _normalize_with_offsets(text)
         assert norm == "'hi'\n\"bye\""
+
+
+class TestFuzzyReplace:
+    def test_trailing_whitespace_difference(self) -> None:
+        body = "line1  \nline2  \nline3"
+        result = _fuzzy_replace(body, "line1\nline2", "AAA\nBBB", replace_all=False)
+        assert result == "AAA\nBBB  \nline3"
+
+    def test_curly_quote_difference(self) -> None:
+        body = 'He said “hello”'
+        result = _fuzzy_replace(body, 'He said "hello"', "She replied", replace_all=False)
+        assert result == "She replied"
+
+    def test_exact_match_still_works(self) -> None:
+        body = "exact match here"
+        result = _fuzzy_replace(body, "exact match", "perfect", replace_all=False)
+        assert result == "perfect here"
+
+    def test_ambiguous_match_raises(self) -> None:
+        body = "line1  \nline2  \nline1  \nline2"
+        with pytest.raises(PatchError, match="fuzzy match"):
+            _fuzzy_replace(body, "line1\nline2", "x", replace_all=False)
+
+    def test_no_match_raises(self) -> None:
+        body = "something else entirely"
+        with pytest.raises(PatchError, match="fuzzy match"):
+            _fuzzy_replace(body, "not here", "x", replace_all=False)
+
+    def test_replace_all_with_fuzzy(self) -> None:
+        body = "foo  \nbar  \nfoo  \nbar"
+        result = _fuzzy_replace(body, "foo\nbar", "X\nY", replace_all=True)
+        assert result == "X\nY  \nX\nY"
+
+    def test_combined_trailing_ws_and_quotes(self) -> None:
+        body = "‘hello’  \nworld"
+        result = _fuzzy_replace(body, "'hello'\nworld", "HI", replace_all=False)
+        assert result == "HI"

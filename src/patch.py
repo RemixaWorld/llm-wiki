@@ -38,6 +38,42 @@ def _normalize_with_offsets(s: str) -> tuple[str, list[int]]:
     return "".join(norm_chars), offsets
 
 
+def _fuzzy_replace(body: str, old_string: str, new_string: str, replace_all: bool) -> str:
+    """Try fuzzy match + replace on body. Raises PatchError on no match or ambiguity."""
+    norm_body, body_offsets = _normalize_with_offsets(body)
+    norm_old, _old_offsets = _normalize_with_offsets(old_string)
+
+    if not replace_all:
+        idx = norm_body.find(norm_old)
+        if idx == -1:
+            raise PatchError("fuzzy match: old_string not found after normalization")
+        next_idx = norm_body.find(norm_old, idx + 1)
+        if next_idx != -1:
+            raise PatchError("fuzzy match: old_string matches multiple locations after normalization")
+        orig_start = body_offsets[idx]
+        orig_end = body_offsets[idx + len(norm_old) - 1] + 1
+        return body[:orig_start] + new_string + body[orig_end:]
+
+    # replace_all: find all non-overlapping matches
+    parts: list[str] = []
+    last_end = 0
+    search_start = 0
+    while True:
+        idx = norm_body.find(norm_old, search_start)
+        if idx == -1:
+            break
+        orig_start = body_offsets[idx]
+        orig_end = body_offsets[idx + len(norm_old) - 1] + 1
+        parts.append(body[last_end:orig_start])
+        parts.append(new_string)
+        last_end = orig_end
+        search_start = idx + len(norm_old)
+    if not parts:
+        raise PatchError("fuzzy match: old_string not found after normalization")
+    parts.append(body[last_end:])
+    return "".join(parts)
+
+
 def apply_edits(body: str, edits: list[EditOp]) -> str:
     """Apply edits sequentially to an in-memory copy. Raises PatchError on any failure."""
     working = body
