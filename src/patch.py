@@ -49,7 +49,9 @@ def _fuzzy_replace(body: str, old_string: str, new_string: str, replace_all: boo
             raise PatchError("fuzzy match: old_string not found after normalization")
         next_idx = norm_body.find(norm_old, idx + 1)
         if next_idx != -1:
-            raise PatchError("fuzzy match: old_string matches multiple locations after normalization")
+            raise PatchError(
+                "fuzzy match: old_string matches multiple locations after normalization"
+            )
         orig_start = body_offsets[idx]
         orig_end = body_offsets[idx + len(norm_old) - 1] + 1
         return body[:orig_start] + new_string + body[orig_end:]
@@ -90,9 +92,11 @@ def apply_edits(body: str, edits: list[EditOp]) -> str:
                 working = working.replace(edit.old_string, edit.new_string, 1)
         elif count == 0:
             try:
-                working = _fuzzy_replace(working, edit.old_string, edit.new_string, edit.replace_all)
+                working = _fuzzy_replace(
+                    working, edit.old_string, edit.new_string, edit.replace_all
+                )
             except PatchError:
-                raise PatchError(f"Edit #{i}: old_string not found")
+                raise PatchError(f"Edit #{i}: old_string not found") from None
         else:
             # count > 1 and not replace_all
             raise PatchError(f"Edit #{i}: matches {count} times, set replace_all=True")
