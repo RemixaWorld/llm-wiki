@@ -69,6 +69,14 @@ class GeneratedPage(BaseModel):
     )
 
 
+class MergedPage(BaseModel):
+    """LLM output: merged content from existing + new page about the same topic."""
+
+    body: str = Field(description="Merged markdown body preserving all unique information from both versions")
+    tags: list[str] = Field(description="Combined tag list from both versions")
+    confidence: Confidence = Field(default=Confidence.MEDIUM)
+
+
 class IngestResult(BaseModel):
     """LLM output: all pages to create from a single source."""
 
@@ -115,6 +123,21 @@ class LintIssue(BaseModel):
     severity: str = Field(description="error | warning | info")
     message: str
     suggestion: str = Field(default="")
+
+
+# ── Checkpoint models ────────────────────────────────────────────────────────
+
+
+class Checkpoint(BaseModel):
+    """Tracks ingest progress for resume after interruption."""
+
+    source: str
+    source_title: str
+    total_chunks: int
+    batch_size: int = 5
+    completed_batches: list[int] = Field(default_factory=list)
+    generated_titles: list[str] = Field(default_factory=list)
+    created_at: str  # ISO datetime for staleness check
 
 
 # ── Extraction models ───────────────────────────────────────────────────────

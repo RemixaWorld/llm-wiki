@@ -67,3 +67,9 @@ prompts:
 
     If your answer synthesizes information from multiple pages in a
     novel way, set should_persist=true and provide a synthesis page.
+
+  merge_system: |
+    You are merging two wiki pages about the same topic into one.
+    Preserve ALL unique information from both versions. Remove redundancy.
+    Maintain a coherent structure. Keep all [[WikiLinks]] from both versions.
+    Use the provided tag vocabulary when possible.
