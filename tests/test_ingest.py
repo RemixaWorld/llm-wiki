@@ -412,3 +412,89 @@ class TestBuildBatchMessages:
         assert user_msg.count("BERT") == 1
         assert "GPT" in user_msg
         assert "Transformer" in user_msg
+
+
+class TestCrossSourceMerge:
+    @pytest.mark.asyncio
+    async def test_second_source_merges_with_existing_page(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Simulate ingesting source B after source A already created a page."""
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        # Source A already ingested — "BERT" page exists on disk
+        existing_fm = WikiFrontmatter(
+            title="BERT",
+            page_type=PageType.ENTITY,
+            sources=["source-a.pdf"],
+            tags=["nlp"],
+            created=date(2026, 4, 1),
+            updated=date(2026, 4, 1),
+            confidence=Confidence.HIGH,
+            related=["transformer-architecture.md"],
+        )
+        write_page(existing_fm, "# BERT\n\nBidirectional encoder from source A.", wiki_dir)
+
+        # Source B generates a page that also has "BERT"
+        source_b_result = IngestResult(
+            source_summary=GeneratedPage(
+                title="Source B Summary",
+                page_type=PageType.SOURCE_SUMMARY,
+                tags=["nlp"],
+                confidence=Confidence.HIGH,
+                body="# Source B\n\nOverview.",
+                related_titles=[],
+            ),
+            concept_pages=[],
+            entity_pages=[
+                GeneratedPage(
+                    title="BERT",
+                    page_type=PageType.ENTITY,
+                    tags=["nlp", "pre-training"],
+                    confidence=Confidence.HIGH,
+                    body="# BERT\n\nNew details about pre-training from source B.",
+                    related_titles=["Source B Summary"],
+                ),
+            ],
+        )
+
+        mock_merged = MergedPage(
+            body="# BERT\n\nBidirectional encoder from source A. New details about pre-training from source B.",
+            tags=["nlp", "pre-training"],
+            confidence=Confidence.HIGH,
+        )
+
+        state = {
+            "chunks": ["Content about BERT pre-training."],
+            "source_path": "source-b.pdf",
+            "source_title": "Source B",
+            "fresh": True,
+        }
+
+        with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm, \
+             patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm:
+            mock_llm.return_value = source_b_result
+            mock_merge_llm.return_value = mock_merged
+            result = await process_batches_node(state)
+
+        assert "errors" not in result or len(result.get("errors", [])) == 0
+
+        # Verify merged BERT page
+        bert_page = read_page("bert.md", wiki_dir)
+        assert "source-a.pdf" in bert_page.frontmatter.sources
+        assert "source-b.pdf" in bert_page.frontmatter.sources
+        assert bert_page.frontmatter.created == date(2026, 4, 1)
+        assert bert_page.frontmatter.updated == date.today()
+        assert "pre-training" in bert_page.frontmatter.tags
+
+        # Source B Summary should be written normally (no merge)
+        assert "source-b-summary.md" in result.get("written_paths", [])
+
+        src.config._settings = None
