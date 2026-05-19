@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.models import EditOp
-from src.patch import PatchError, apply_edits
+from src.patch import PatchError, _normalize_with_offsets, apply_edits
 
 
 class TestApplyEditsSingleEdit:
@@ -90,3 +90,36 @@ class TestApplyEditsErrors:
         edits = [EditOp(old_string="aaa", new_string="ccc")]
         with pytest.raises(PatchError, match="matches 2 times"):
             apply_edits(body, edits)
+
+
+class TestNormalizeWithOffsets:
+    def test_no_change_needed(self) -> None:
+        text = "hello world"
+        norm, offsets = _normalize_with_offsets(text)
+        assert norm == "hello world"
+        assert offsets == list(range(len(text)))
+
+    def test_strips_trailing_spaces_per_line(self) -> None:
+        text = "line1   \nline2  \nline3"
+        norm, offsets = _normalize_with_offsets(text)
+        assert norm == "line1\nline2\nline3"
+
+    def test_curly_quotes_to_straight(self) -> None:
+        text = "‘hello’ “world”"
+        norm, offsets = _normalize_with_offsets(text)
+        assert norm == "'hello' \"world\""
+
+    def test_offsets_map_back_to_original(self) -> None:
+        text = "ab  \ncd"
+        norm, offsets = _normalize_with_offsets(text)
+        # norm = "ab\ncd", offsets maps each norm position to original
+        assert offsets[0] == 0  # 'a'
+        assert offsets[1] == 1  # 'b'
+        assert offsets[2] == 4  # '\n' (original pos 4)
+        assert offsets[3] == 5  # 'c'
+        assert offsets[4] == 6  # 'd'
+
+    def test_combined_trailing_ws_and_quotes(self) -> None:
+        text = "‘hi’  \n“bye”"
+        norm, offsets = _normalize_with_offsets(text)
+        assert norm == "'hi'\n\"bye\""
