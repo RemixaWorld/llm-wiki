@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -12,6 +14,7 @@ from src.config import get_settings
 from src.extract import chunk_text, extract_source
 from src.llm import complete_structured
 from src.models import (
+    Checkpoint,
     GeneratedPage,
     IngestResult,
     WikiFrontmatter,
@@ -26,6 +29,52 @@ from src.wiki import (
 
 logger = logging.getLogger(__name__)
 
+
+# ── Checkpoint helpers ────────────────────────────────────────────────────────
+
+
+def _source_to_slug(source_path: str) -> str:
+    return source_path.replace("/", "-").replace("\\", "-")
+
+
+def _checkpoint_path(source_path: str) -> Path:
+    settings = get_settings()
+    return settings.checkpoint_dir / f"{_source_to_slug(source_path)}.json"
+
+
+def _read_checkpoint(source_path: str) -> Checkpoint | None:
+    path = _checkpoint_path(source_path)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return Checkpoint.model_validate(data)
+    except Exception:
+        logger.warning("corrupt checkpoint path=%s, ignoring", path)
+        return None
+
+
+def _write_checkpoint(cp: Checkpoint) -> None:
+    path = _checkpoint_path(cp.source)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(cp.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _delete_checkpoint(source_path: str) -> None:
+    path = _checkpoint_path(source_path)
+    if path.exists():
+        path.unlink()
+
+
+def _source_modified(source_path: str, cp: Checkpoint) -> bool:
+    src = Path(source_path)
+    if not src.exists():
+        return False
+    source_mtime = datetime.fromtimestamp(src.stat().st_mtime, tz=datetime.UTC)
+    created = datetime.fromisoformat(cp.created_at)
+    return source_mtime > created
+
+
 # ── State ────────────────────────────────────────────────────────────────────
 
 
@@ -38,6 +87,48 @@ class IngestState(TypedDict, total=False):
     written_paths: list[str]
     updated_pages: list[str]
     errors: list[str]
+
+
+# ── Batch helpers ────────────────────────────────────────────────────────────
+
+
+def _build_batch_messages(
+    chunks: list[str],
+    batch_start: int,
+    batch_size: int,
+    source_title: str,
+    existing_titles: list[str],
+) -> list[dict[str, str]]:
+    """Build LLM messages for a single batch of chunks.
+
+    Includes existing page titles so the LLM can create cross-batch wikilinks.
+    """
+    from src.config import get_allowed_tags, get_ingest_prompt
+
+    batch = chunks[batch_start : batch_start + batch_size]
+    combined = "\n\n---\n\n".join(batch)
+
+    system_prompt = get_ingest_prompt()
+    allowed_tags = get_allowed_tags()
+    if allowed_tags:
+        system_prompt += "\n\nPreferred tags (use these when applicable): " + ", ".join(
+            allowed_tags
+        )
+
+    user_content = (
+        f"Source: {source_title}\n\n"
+        f"Create wiki pages from this source text:\n\n{combined}"
+    )
+    if existing_titles:
+        user_content += (
+            f"\n\nThe following wiki pages already exist: {', '.join(existing_titles)}"
+            "\nLink to them using [[Title]] syntax where relevant."
+        )
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
 
 
 # ── Node functions ───────────────────────────────────────────────────────────
