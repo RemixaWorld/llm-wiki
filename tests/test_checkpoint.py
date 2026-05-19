@@ -1,7 +1,7 @@
 """Tests for checkpoint helpers and batch message builder."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -41,7 +41,7 @@ class TestCheckpointRoundTrip:
             source_title="Test",
             total_chunks=10,
             batch_size=5,
-            created_at=datetime.now(datetime.UTC).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
         _write_checkpoint(cp)
 
@@ -61,7 +61,7 @@ class TestCheckpointRoundTrip:
             source="data/test.txt",
             source_title="Test",
             total_chunks=10,
-            created_at=datetime.now(datetime.UTC).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
         _write_checkpoint(cp)
         assert _read_checkpoint("data/test.txt") is not None
@@ -99,7 +99,7 @@ class TestSourceModified:
         src = tmp_path / "source.txt"
         src.write_text("content", encoding="utf-8")
 
-        old_time = (datetime.now(datetime.UTC) - timedelta(hours=1)).isoformat()
+        old_time = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         cp = Checkpoint(
             source=str(src),
             source_title="Test",
@@ -114,10 +114,10 @@ class TestSourceModified:
 
         # Set source mtime to 1 hour ago
         import os
-        old_mtime = (datetime.now(datetime.UTC) - timedelta(hours=2)).timestamp()
+        old_mtime = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
         os.utime(src, (old_mtime, old_mtime))
 
-        future_time = (datetime.now(datetime.UTC) + timedelta(hours=1)).isoformat()
+        future_time = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         cp = Checkpoint(
             source=str(src),
             source_title="Test",
@@ -131,7 +131,7 @@ class TestSourceModified:
             source="/nonexistent/file.txt",
             source_title="Test",
             total_chunks=5,
-            created_at=datetime.now(datetime.UTC).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
         assert _source_modified("/nonexistent/file.txt", cp) is False
 

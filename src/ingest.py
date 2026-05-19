@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TypedDict
 
@@ -70,7 +70,7 @@ def _source_modified(source_path: str, cp: Checkpoint) -> bool:
     src = Path(source_path)
     if not src.exists():
         return False
-    source_mtime = datetime.fromtimestamp(src.stat().st_mtime, tz=datetime.UTC)
+    source_mtime = datetime.fromtimestamp(src.stat().st_mtime, tz=UTC)
     created = datetime.fromisoformat(cp.created_at)
     return source_mtime > created
 
