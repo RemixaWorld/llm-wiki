@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     schema_path: Path = Path("schema.yaml")
 
     # LLM providers (LiteLLM model strings)
+    minimax_api_key: SecretStr = SecretStr("")
+    minimax_model: str = "minimax/minimax-m2.7"
+    minimax_api_base: str = "https://api.minimaxi.com/v1"
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "ollama/qwen2.5:3b"
     groq_api_key: SecretStr = SecretStr("")
@@ -92,6 +95,17 @@ def get_ingest_prompt() -> str:
         "ingest_system",
         "You are a knowledge wiki curator. Given source text, extract key concepts "
         "and entities into structured wiki pages.",
+    )
+
+
+def get_merge_prompt() -> str:
+    """Return the merge system prompt from schema.yaml."""
+    schema = load_schema()
+    prompts = schema.get("prompts", {})
+    return prompts.get(
+        "merge_system",
+        "You are merging two wiki pages about the same topic. "
+        "Preserve all unique information, remove redundancy, keep all [[WikiLinks]].",
     )
 
 

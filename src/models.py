@@ -69,6 +69,14 @@ class GeneratedPage(BaseModel):
     )
 
 
+class MergedPage(BaseModel):
+    """LLM output: merged content from existing + new page about the same topic."""
+
+    body: str = Field(description="Merged markdown body preserving all unique information from both versions")
+    tags: list[str] = Field(description="Combined tag list from both versions")
+    confidence: Confidence = Field(default=Confidence.MEDIUM)
+
+
 class IngestResult(BaseModel):
     """LLM output: all pages to create from a single source."""
 
