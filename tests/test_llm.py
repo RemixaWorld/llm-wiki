@@ -17,6 +17,7 @@ class SimpleOutput(BaseModel):
 
 class TestGetProviders:
     def test_ollama_always_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("WIKI_MINIMAX_API_KEY", "")
         monkeypatch.setenv("WIKI_GROQ_API_KEY", "")
         monkeypatch.setenv("WIKI_GEMINI_API_KEY", "")
 
@@ -33,6 +34,7 @@ class TestGetProviders:
         src.config._settings = None
 
     def test_groq_added_when_key_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("WIKI_MINIMAX_API_KEY", "")
         monkeypatch.setenv("WIKI_GROQ_API_KEY", "test-key-123")
         monkeypatch.setenv("WIKI_GEMINI_API_KEY", "")
 
@@ -47,6 +49,7 @@ class TestGetProviders:
         src.config._settings = None
 
     def test_provider_order(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("WIKI_MINIMAX_API_KEY", "")
         monkeypatch.setenv("WIKI_GROQ_API_KEY", "groq-key")
         monkeypatch.setenv("WIKI_GEMINI_API_KEY", "gemini-key")
 
@@ -94,6 +97,7 @@ class TestCompleteStructured:
     @pytest.mark.asyncio
     async def test_fallback_on_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """First provider fails, second succeeds."""
+        monkeypatch.setenv("WIKI_MINIMAX_API_KEY", "")
         monkeypatch.setenv("WIKI_GROQ_API_KEY", "groq-key")
         monkeypatch.setenv("WIKI_GEMINI_API_KEY", "")
 
@@ -128,6 +132,7 @@ class TestCompleteStructured:
     @pytest.mark.asyncio
     async def test_all_providers_fail(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """All providers fail — raises RuntimeError."""
+        monkeypatch.setenv("WIKI_MINIMAX_API_KEY", "")
         monkeypatch.setenv("WIKI_GROQ_API_KEY", "")
         monkeypatch.setenv("WIKI_GEMINI_API_KEY", "")
 
