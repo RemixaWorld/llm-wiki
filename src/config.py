@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     max_chunk_tokens: int = 4000
     max_pages_per_ingest: int = 15
 
+    # Checkpoint / resume
+    checkpoint_dir: Path = Path(".wiki-checkpoints")
+    batch_size: int = 5
+
     # Search
     bm25_k1: float = 1.5
     bm25_b: float = 0.75

@@ -117,6 +117,21 @@ class LintIssue(BaseModel):
     suggestion: str = Field(default="")
 
 
+# ── Checkpoint models ────────────────────────────────────────────────────────
+
+
+class Checkpoint(BaseModel):
+    """Tracks ingest progress for resume after interruption."""
+
+    source: str
+    source_title: str
+    total_chunks: int
+    batch_size: int = 5
+    completed_batches: list[int] = Field(default_factory=list)
+    generated_titles: list[str] = Field(default_factory=list)
+    created_at: str  # ISO datetime for staleness check
+
+
 # ── Extraction models ───────────────────────────────────────────────────────
 
 
