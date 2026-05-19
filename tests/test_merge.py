@@ -229,10 +229,12 @@ class TestMergeFrontmatter:
         assert fm.page_type == PageType.ENTITY
 
 
-class TestMergePage:
+class TestMergePagePatchSuccess:
     @pytest.mark.asyncio
-    async def test_merges_via_llm(self) -> None:
+    async def test_patch_succeeds_on_first_attempt(self) -> None:
         from unittest.mock import AsyncMock, patch
+
+        from src.models import EditOp, PatchedPage
 
         existing_page = WikiPage(
             path="bert.md",
@@ -252,22 +254,113 @@ class TestMergePage:
             page_type=PageType.ENTITY,
             tags=["nlp", "pre-training"],
             confidence=Confidence.HIGH,
-            body="# BERT\n\nNew info about bidirectional training.",
+            body="# BERT\n\nBidirectional encoder with masked language modeling.",
             related_titles=["Transformer Architecture"],
         )
 
-        mock_merged = MergedPage(
-            body="# BERT\n\nBidirectional encoder. New info about bidirectional training.",
-            tags=["nlp", "pre-training"],
+        mock_patched = PatchedPage(
+            edits=[
+                EditOp(
+                    old_string="Bidirectional encoder.",
+                    new_string="Bidirectional encoder with masked language modeling.",
+                ),
+            ],
+            tags_to_add=["pre-training"],
             confidence=Confidence.HIGH,
         )
 
         with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
-            mock_llm.return_value = mock_merged
+            mock_llm.return_value = mock_patched
             fm, body = await merge_page(existing_page, new_page, "articles/bert-guide.md")
 
-        assert "bidirectional" in body.lower()
-        assert "papers/bert.pdf" in fm.sources
-        assert "articles/bert-guide.md" in fm.sources
-        assert fm.title == "BERT"
-        assert fm.created == date(2026, 1, 1)
+        assert "masked language modeling" in body
+        assert "pre-training" in fm.tags
+        assert mock_llm.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_patch_retries_on_failure_then_succeeds(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from src.models import EditOp, PatchedPage
+
+        existing_page = WikiPage(
+            path="bert.md",
+            frontmatter=WikiFrontmatter(
+                title="BERT",
+                page_type=PageType.ENTITY,
+                sources=["papers/bert.pdf"],
+                tags=["nlp"],
+                created=date(2026, 1, 1),
+                updated=date(2026, 1, 1),
+            ),
+            body="# BERT\n\nBidirectional encoder.",
+        )
+        new_page = GeneratedPage(
+            title="BERT",
+            page_type=PageType.ENTITY,
+            tags=["nlp"],
+            confidence=Confidence.MEDIUM,
+            body="# BERT\n\nUpdated content.",
+        )
+
+        bad_patch = PatchedPage(
+            edits=[EditOp(old_string="NOT IN BODY", new_string="x")],
+            tags_to_add=[],
+            confidence=Confidence.MEDIUM,
+        )
+        good_patch = PatchedPage(
+            edits=[EditOp(old_string="Bidirectional encoder.", new_string="Updated content.")],
+            tags_to_add=[],
+            confidence=Confidence.MEDIUM,
+        )
+
+        with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.side_effect = [bad_patch, good_patch]
+            fm, body = await merge_page(existing_page, new_page, "new.pdf")
+
+        assert body == "# BERT\n\nUpdated content."
+        assert mock_llm.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_rewrite_after_3_patch_failures(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from src.models import EditOp, PatchedPage
+
+        existing_page = WikiPage(
+            path="bert.md",
+            frontmatter=WikiFrontmatter(
+                title="BERT",
+                page_type=PageType.ENTITY,
+                sources=["papers/bert.pdf"],
+                tags=["nlp"],
+                created=date(2026, 1, 1),
+                updated=date(2026, 1, 1),
+            ),
+            body="# BERT\n\nBidirectional encoder.",
+        )
+        new_page = GeneratedPage(
+            title="BERT",
+            page_type=PageType.ENTITY,
+            tags=["nlp"],
+            confidence=Confidence.MEDIUM,
+            body="# BERT\n\nUpdated content.",
+        )
+
+        bad_patch = PatchedPage(
+            edits=[EditOp(old_string="NOT IN BODY", new_string="x")],
+            tags_to_add=[],
+            confidence=Confidence.MEDIUM,
+        )
+        mock_merged = MergedPage(
+            body="# BERT\n\nBidirectional encoder. Updated content.",
+            tags=["nlp"],
+            confidence=Confidence.MEDIUM,
+        )
+
+        with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.side_effect = [bad_patch, bad_patch, bad_patch, mock_merged]
+            fm, body = await merge_page(existing_page, new_page, "new.pdf")
+
+        assert "Updated content" in body
+        assert mock_llm.call_count == 4  # 3 patch + 1 rewrite

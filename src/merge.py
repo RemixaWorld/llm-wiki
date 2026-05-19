@@ -5,12 +5,13 @@ from __future__ import annotations
 import logging
 from datetime import date
 
-from src.config import get_allowed_tags, get_merge_prompt
+from src.config import get_allowed_tags, get_edit_prompt, get_merge_prompt
 from src.llm import complete_structured
 from src.models import (
     Confidence,
     GeneratedPage,
     MergedPage,
+    PatchedPage,
     WikiFrontmatter,
     WikiPage,
 )
@@ -73,25 +74,54 @@ def _merge_frontmatter(
     return fm, merged_body
 
 
-async def merge_page(
+def _build_patch_messages(
     existing: WikiPage,
     new_page: GeneratedPage,
     source_path: str,
-) -> tuple[WikiFrontmatter, str]:
-    """Merge existing page with new generated page via LLM.
-
-    Sends both page bodies to the LLM with a merge prompt.
-    Returns (merged_frontmatter, merged_body) ready for write_page().
-    """
-    system_prompt = get_merge_prompt()
-
+    last_error: str | None = None,
+) -> list[dict[str, str]]:
+    """Build LLM messages for patch-mode merge."""
+    system_prompt = get_edit_prompt()
     allowed_tags = get_allowed_tags()
     if allowed_tags:
-        system_prompt += "\n\nPreferred tags (use these when applicable): " + ", ".join(
-            allowed_tags
+        system_prompt += "\n\nPreferred tags (use these when applicable): " + ", ".join(allowed_tags)
+
+    user_content = (
+        f"Compare the existing wiki page with new content and generate edit operations to merge them.\n\n"
+        f"=== EXISTING PAGE ===\n"
+        f"Title: {existing.frontmatter.title}\n\n"
+        f"{existing.body}\n\n"
+        f"=== NEW CONTENT (from source: {source_path}) ===\n"
+        f"Title: {new_page.title}\n\n"
+        f"{new_page.body}\n\n"
+        f"Generate minimal edit operations to add new information to the existing page."
+    )
+
+    if last_error:
+        user_content += (
+            f"\n\nPrevious edit attempt failed with error: {last_error}\n"
+            f"Check that old_string exactly matches text in the existing page "
+            f"(including spaces, newlines, indentation) and correct it."
         )
 
-    messages = [
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def _build_rewrite_messages(
+    existing: WikiPage,
+    new_page: GeneratedPage,
+    source_path: str,
+) -> list[dict[str, str]]:
+    """Build LLM messages for rewrite-mode merge (fallback)."""
+    system_prompt = get_merge_prompt()
+    allowed_tags = get_allowed_tags()
+    if allowed_tags:
+        system_prompt += "\n\nPreferred tags (use these when applicable): " + ", ".join(allowed_tags)
+
+    return [
         {"role": "system", "content": system_prompt},
         {
             "role": "user",
@@ -109,14 +139,60 @@ async def merge_page(
         },
     ]
 
+
+async def merge_page(
+    existing: WikiPage,
+    new_page: GeneratedPage,
+    source_path: str,
+) -> tuple[WikiFrontmatter, str]:
+    """Merge existing page with new generated page via edit/patch or full rewrite.
+
+    Tries patch-first (up to 3 attempts with error context on retry).
+    Falls back to full rewrite via MergedPage if all patch attempts fail.
+    """
+    from src.patch import PatchError, apply_edits
+
+    max_patch_attempts = 3
+    last_error: str | None = None
+
+    for attempt in range(max_patch_attempts):
+        messages = _build_patch_messages(existing, new_page, source_path, last_error)
+        result = await complete_structured(
+            messages=messages,
+            response_model=PatchedPage,
+            temperature=0.2,
+        )
+
+        try:
+            body = apply_edits(existing.body, result.edits)
+            logger.info(
+                "patched page title=%s attempt=%d edits=%d",
+                existing.frontmatter.title,
+                attempt + 1,
+                len(result.edits),
+            )
+            return _merge_frontmatter(
+                existing_fm=existing.frontmatter,
+                new_page=new_page,
+                merged_body=body,
+                merged_tags=list(existing.frontmatter.tags) + result.tags_to_add,
+                merged_confidence=result.confidence,
+                source_path=source_path,
+            )
+        except PatchError as e:
+            last_error = str(e)
+            logger.warning("patch attempt %d failed for title=%s: %s", attempt + 1, existing.frontmatter.title, e)
+
+    # Fallback: full rewrite
+    logger.info("falling back to rewrite for title=%s", existing.frontmatter.title)
+    messages = _build_rewrite_messages(existing, new_page, source_path)
     result = await complete_structured(
         messages=messages,
         response_model=MergedPage,
         temperature=0.2,
     )
 
-    logger.info("merged page title=%s", existing.frontmatter.title)
-
+    logger.info("rewrote page title=%s", existing.frontmatter.title)
     return _merge_frontmatter(
         existing_fm=existing.frontmatter,
         new_page=new_page,

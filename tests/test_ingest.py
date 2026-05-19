@@ -21,7 +21,6 @@ from src.models import (
     Confidence,
     GeneratedPage,
     IngestResult,
-    MergedPage,
     PageType,
     WikiFrontmatter,
 )
@@ -338,16 +337,23 @@ class TestProcessBatchesMerge:
             "fresh": True,
         }
 
-        mock_merged = MergedPage(
-            body="# BERT\n\nMerged content combining old and new.",
-            tags=["nlp", "pre-training"],
+        from src.models import EditOp, PatchedPage
+
+        mock_patched = PatchedPage(
+            edits=[
+                EditOp(
+                    old_string="# BERT\n\nOld content about BERT.",
+                    new_string="# BERT\n\nMerged content combining old and new.",
+                ),
+            ],
+            tags_to_add=["pre-training"],
             confidence=Confidence.HIGH,
         )
 
         with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm, \
              patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm:
             mock_llm.return_value = mock_ingest_result
-            mock_merge_llm.return_value = mock_merged
+            mock_merge_llm.return_value = mock_patched
             result = await process_batches_node(state)
 
         assert "errors" not in result or len(result.get("errors", [])) == 0
@@ -465,9 +471,16 @@ class TestCrossSourceMerge:
             ],
         )
 
-        mock_merged = MergedPage(
-            body="# BERT\n\nBidirectional encoder from source A. New details about pre-training from source B.",
-            tags=["nlp", "pre-training"],
+        from src.models import EditOp, PatchedPage
+
+        mock_patched = PatchedPage(
+            edits=[
+                EditOp(
+                    old_string="# BERT\n\nBidirectional encoder from source A.",
+                    new_string="# BERT\n\nBidirectional encoder from source A. New details about pre-training from source B.",
+                ),
+            ],
+            tags_to_add=["pre-training"],
             confidence=Confidence.HIGH,
         )
 
@@ -481,7 +494,7 @@ class TestCrossSourceMerge:
         with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm, \
              patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm:
             mock_llm.return_value = source_b_result
-            mock_merge_llm.return_value = mock_merged
+            mock_merge_llm.return_value = mock_patched
             result = await process_batches_node(state)
 
         assert "errors" not in result or len(result.get("errors", [])) == 0
