@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from src.ingest import (
+    _write_checkpoint,
     build_ingest_graph,
     chunk_source_node,
     extract_text_node,
     process_batches_node,
     run_ingest,
 )
-from src.models import Confidence, GeneratedPage, IngestResult, PageType
+from src.models import Checkpoint, Confidence, GeneratedPage, IngestResult, PageType
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -138,6 +140,106 @@ class TestProcessBatchesNode:
         state = {"chunks": [], "source_path": "test.txt"}
         result = await process_batches_node(state)
         assert "errors" in result
+
+    @pytest.mark.asyncio
+    async def test_resumes_from_checkpoint(
+        self, tmp_path: Path, mock_ingest_result: IngestResult, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        monkeypatch.setenv("WIKI_BATCH_SIZE", "2")
+        import src.config
+
+        src.config._settings = None
+
+        # Pre-create checkpoint with batch 0 completed
+        cp = Checkpoint(
+            source="test.txt",
+            source_title="Test Source",
+            total_chunks=4,
+            batch_size=2,
+            completed_batches=[0],
+            generated_titles=["Existing Page"],
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        _write_checkpoint(cp)
+
+        chunks = ["chunk0", "chunk1", "chunk2", "chunk3"]
+        state = {
+            "chunks": chunks,
+            "source_path": "test.txt",
+            "source_title": "Test Source",
+        }
+
+        call_count = 0
+
+        async def mock_llm_fn(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return mock_ingest_result
+
+        with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.side_effect = mock_llm_fn
+            result = await process_batches_node(state)
+
+        # Only batch 1 should have been called (batch 0 skipped)
+        assert call_count == 1
+        assert "written_paths" in result
+        assert len(result["written_paths"]) == 3
+        # Checkpoint should be deleted (all batches complete)
+        assert not list(checkpoint_dir.glob("*.json"))
+
+        src.config._settings = None
+
+    @pytest.mark.asyncio
+    async def test_batch_failure_preserves_checkpoint(
+        self, tmp_path: Path, mock_ingest_result: IngestResult, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        monkeypatch.setenv("WIKI_BATCH_SIZE", "2")
+        import src.config
+
+        src.config._settings = None
+
+        chunks = ["chunk0", "chunk1", "chunk2", "chunk3"]
+        state = {
+            "chunks": chunks,
+            "source_path": "test.txt",
+            "source_title": "Test Source",
+            "fresh": True,
+        }
+
+        call_count = 0
+
+        async def mock_llm_fn(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return mock_ingest_result
+            raise RuntimeError("LLM quota exhausted")
+
+        with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.side_effect = mock_llm_fn
+            result = await process_batches_node(state)
+
+        # Batch 0 succeeded, batch 1 failed
+        assert call_count == 2
+        assert "errors" in result
+        assert len(result["errors"]) == 1
+        # Batch 0's pages should be written
+        assert len(result["written_paths"]) == 3
+        # Checkpoint should still exist with only batch 0 completed
+        checkpoints = list(checkpoint_dir.glob("*.json"))
+        assert len(checkpoints) == 1
+
+        src.config._settings = None
 
 
 # ── Integration test ─────────────────────────────────────────────────────────

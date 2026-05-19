@@ -13,6 +13,9 @@ __pycache__/
 dist/
 build/
 
+# Checkpoint files (runtime state for ingest resume)
+.wiki-checkpoints/
+
 # Environment
 .env
 .venv/

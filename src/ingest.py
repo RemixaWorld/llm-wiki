@@ -173,6 +173,12 @@ async def process_batches_node(state: IngestState) -> IngestState:
 
     # Load or create checkpoint
     cp = None if fresh else _read_checkpoint(source_path)
+    if cp is not None and cp.total_chunks != len(chunks):
+        logger.info(
+            "chunk count changed old=%d new=%d, starting fresh",
+            cp.total_chunks, len(chunks),
+        )
+        cp = None
     if cp is None or _source_modified(source_path, cp):
         if cp is not None:
             logger.info("source modified since checkpoint, starting fresh")
