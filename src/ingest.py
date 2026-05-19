@@ -98,6 +98,7 @@ def _build_batch_messages(
     batch_size: int,
     source_title: str,
     existing_titles: list[str],
+    wiki_titles: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Build LLM messages for a single batch of chunks.
 
@@ -119,11 +120,14 @@ def _build_batch_messages(
         f"Source: {source_title}\n\n"
         f"Create wiki pages from this source text:\n\n{combined}"
     )
-    if existing_titles:
+    all_existing = list(dict.fromkeys((existing_titles or []) + (wiki_titles or [])))
+    if all_existing:
         user_content += (
-            f"\n\nThe following wiki pages already exist: {', '.join(existing_titles)}"
+            f"\n\nThe following wiki pages already exist: {', '.join(all_existing)}"
             "\nLink to them using [[Title]] syntax where relevant."
-            "\nDo NOT create new pages that duplicate these titles — use [[Title]] links instead."
+            "\nIf you have genuinely NEW information about an existing topic, you may"
+            " create a page with that title — it will be merged with existing content."
+            "\nOtherwise, prefer using [[Title]] links."
         )
 
     return [
@@ -173,6 +177,18 @@ async def process_batches_node(state: IngestState) -> IngestState:
     total_batches = (len(chunks) + batch_size - 1) // batch_size
     fresh = state.get("fresh", False)
 
+    # Load existing wiki page titles for prompt context
+    from src.wiki import list_pages as list_wiki_pages
+
+    wiki_titles: list[str] = []
+    if settings.wiki_dir.exists():
+        for p in list_wiki_pages(settings.wiki_dir):
+            try:
+                page = read_page(p, settings.wiki_dir)
+                wiki_titles.append(page.frontmatter.title)
+            except Exception:
+                pass
+
     # Load or create checkpoint
     cp = None if fresh else _read_checkpoint(source_path)
     if cp is not None and cp.total_chunks != len(chunks):
@@ -207,6 +223,7 @@ async def process_batches_node(state: IngestState) -> IngestState:
             batch_size=batch_size,
             source_title=source_title,
             existing_titles=cp.generated_titles,
+            wiki_titles=wiki_titles,
         )
 
         try:

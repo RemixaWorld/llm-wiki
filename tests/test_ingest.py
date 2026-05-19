@@ -357,3 +357,58 @@ class TestProcessBatchesMerge:
         assert bert_page.frontmatter.created == date(2026, 1, 1)  # preserved
 
         src.config._settings = None
+
+
+class TestBuildBatchMessages:
+    def test_includes_wiki_titles_in_prompt(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        import src.config
+        src.config._settings = None
+
+        # Create an existing page on disk
+        from src.wiki import write_page
+
+        fm = WikiFrontmatter(
+            title="Existing Topic",
+            page_type=PageType.CONCEPT,
+            sources=["old.pdf"],
+            created=date(2026, 1, 1),
+            updated=date(2026, 1, 1),
+        )
+        write_page(fm, "Content.", wiki_dir)
+
+        from src.ingest import _build_batch_messages
+
+        messages = _build_batch_messages(
+            chunks=["chunk text"],
+            batch_start=0,
+            batch_size=5,
+            source_title="Test Source",
+            existing_titles=[],
+            wiki_titles=["Existing Topic"],
+        )
+
+        user_msg = messages[1]["content"]
+        assert "Existing Topic" in user_msg
+
+        src.config._settings = None
+
+    def test_dedupes_combined_titles(self) -> None:
+        from src.ingest import _build_batch_messages
+
+        messages = _build_batch_messages(
+            chunks=["chunk text"],
+            batch_start=0,
+            batch_size=5,
+            source_title="Test Source",
+            existing_titles=["BERT", "GPT"],
+            wiki_titles=["BERT", "Transformer"],
+        )
+
+        user_msg = messages[1]["content"]
+        # BERT should appear only once in the combined list
+        assert user_msg.count("BERT") == 1
+        assert "GPT" in user_msg
+        assert "Transformer" in user_msg
