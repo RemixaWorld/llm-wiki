@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -171,7 +171,7 @@ class TestProcessBatchesNode:
             batch_size=2,
             completed_batches=[0],
             generated_titles=["Existing Page"],
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
         _write_checkpoint(cp)
 
@@ -350,8 +350,10 @@ class TestProcessBatchesMerge:
             confidence=Confidence.HIGH,
         )
 
-        with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm, \
-             patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm:
+        with (
+            patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm,
+            patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
+        ):
             mock_llm.return_value = mock_ingest_result
             mock_merge_llm.return_value = mock_patched
             result = await process_batches_node(state)
@@ -359,18 +361,24 @@ class TestProcessBatchesMerge:
         assert "errors" not in result or len(result.get("errors", [])) == 0
         # Verify BERT page was merged (not just overwritten)
         bert_page = read_page("bert.md", wiki_dir)
-        assert "old" in bert_page.frontmatter.sources or "new-source.txt" in bert_page.frontmatter.sources
+        assert (
+            "old" in bert_page.frontmatter.sources
+            or "new-source.txt" in bert_page.frontmatter.sources
+        )
         assert bert_page.frontmatter.created == date(2026, 1, 1)  # preserved
 
         src.config._settings = None
 
 
 class TestBuildBatchMessages:
-    def test_includes_wiki_titles_in_prompt(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_includes_wiki_titles_in_prompt(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         wiki_dir = tmp_path / "wiki"
         wiki_dir.mkdir()
         monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
         import src.config
+
         src.config._settings = None
 
         # Create an existing page on disk
@@ -491,8 +499,10 @@ class TestCrossSourceMerge:
             "fresh": True,
         }
 
-        with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm, \
-             patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm:
+        with (
+            patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm,
+            patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
+        ):
             mock_llm.return_value = source_b_result
             mock_merge_llm.return_value = mock_patched
             result = await process_batches_node(state)

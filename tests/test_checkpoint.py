@@ -1,4 +1,5 @@
 """Tests for checkpoint helpers and batch message builder."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -34,6 +35,7 @@ class TestCheckpointRoundTrip:
     def test_write_and_read_checkpoint(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
         import src.config
+
         src.config._settings = None
 
         cp = Checkpoint(
@@ -55,6 +57,7 @@ class TestCheckpointRoundTrip:
     def test_delete_checkpoint(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
         import src.config
+
         src.config._settings = None
 
         cp = Checkpoint(
@@ -71,9 +74,12 @@ class TestCheckpointRoundTrip:
 
         src.config._settings = None
 
-    def test_read_corrupt_checkpoint_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    def test_read_corrupt_checkpoint_returns_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
         import src.config
+
         src.config._settings = None
 
         cp_path = _checkpoint_path("data/test.txt")
@@ -87,6 +93,7 @@ class TestCheckpointRoundTrip:
     def test_read_nonexistent_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
         import src.config
+
         src.config._settings = None
 
         assert _read_checkpoint("nonexistent.txt") is None
@@ -114,6 +121,7 @@ class TestSourceModified:
 
         # Set source mtime to 1 hour ago
         import os
+
         old_mtime = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
         os.utime(src, (old_mtime, old_mtime))
 

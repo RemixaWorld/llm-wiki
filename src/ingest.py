@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TypedDict
 
@@ -117,8 +117,7 @@ def _build_batch_messages(
         )
 
     user_content = (
-        f"Source: {source_title}\n\n"
-        f"Create wiki pages from this source text:\n\n{combined}"
+        f"Source: {source_title}\n\nCreate wiki pages from this source text:\n\n{combined}"
     )
     all_existing = list(dict.fromkeys((existing_titles or []) + (wiki_titles or [])))
     if all_existing:
@@ -194,7 +193,8 @@ async def process_batches_node(state: IngestState) -> IngestState:
     if cp is not None and cp.total_chunks != len(chunks):
         logger.info(
             "chunk count changed old=%d new=%d, starting fresh",
-            cp.total_chunks, len(chunks),
+            cp.total_chunks,
+            len(chunks),
         )
         cp = None
     if cp is None or _source_modified(source_path, cp):
@@ -205,7 +205,7 @@ async def process_batches_node(state: IngestState) -> IngestState:
             source_title=source_title,
             total_chunks=len(chunks),
             batch_size=batch_size,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
         _write_checkpoint(cp)
 
@@ -242,7 +242,9 @@ async def process_batches_node(state: IngestState) -> IngestState:
                 existing_page = get_page_by_title(gen_page.title, settings.wiki_dir)
                 if existing_page is not None:
                     merged_fm, merged_body = await merge_page(
-                        existing_page, gen_page, source_path,
+                        existing_page,
+                        gen_page,
+                        source_path,
                     )
                     path = write_page(merged_fm, merged_body, settings.wiki_dir)
                 else:
@@ -267,7 +269,9 @@ async def process_batches_node(state: IngestState) -> IngestState:
 
             logger.info(
                 "batch complete batch=%d/%d pages=%d",
-                batch_idx + 1, total_batches, len(batch_titles),
+                batch_idx + 1,
+                total_batches,
+                len(batch_titles),
             )
 
         except Exception as exc:

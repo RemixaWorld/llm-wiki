@@ -84,7 +84,9 @@ def _build_patch_messages(
     system_prompt = get_edit_prompt()
     allowed_tags = get_allowed_tags()
     if allowed_tags:
-        system_prompt += "\n\nPreferred tags (use these when applicable): " + ", ".join(allowed_tags)
+        system_prompt += "\n\nPreferred tags (use these when applicable): " + ", ".join(
+            allowed_tags
+        )
 
     user_content = (
         f"Compare the existing wiki page with new content and generate edit operations to merge them.\n\n"
@@ -119,7 +121,9 @@ def _build_rewrite_messages(
     system_prompt = get_merge_prompt()
     allowed_tags = get_allowed_tags()
     if allowed_tags:
-        system_prompt += "\n\nPreferred tags (use these when applicable): " + ", ".join(allowed_tags)
+        system_prompt += "\n\nPreferred tags (use these when applicable): " + ", ".join(
+            allowed_tags
+        )
 
     return [
         {"role": "system", "content": system_prompt},
@@ -181,7 +185,12 @@ async def merge_page(
             )
         except PatchError as e:
             last_error = str(e)
-            logger.warning("patch attempt %d failed for title=%s: %s", attempt + 1, existing.frontmatter.title, e)
+            logger.warning(
+                "patch attempt %d failed for title=%s: %s",
+                attempt + 1,
+                existing.frontmatter.title,
+                e,
+            )
 
     # Fallback: full rewrite
     logger.info("falling back to rewrite for title=%s", existing.frontmatter.title)
