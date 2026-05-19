@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # Checkpoint / resume
     checkpoint_dir: Path = Path(".wiki-checkpoints")
-    batch_size: int = 5
+    batch_size: int = Field(default=5, gt=0)
 
     # Search
     bm25_k1: float = 1.5
