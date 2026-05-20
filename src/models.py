@@ -118,6 +118,30 @@ class BriefOutput(BaseModel):
     brief: str
 
 
+class CollisionPair(BaseModel):
+    """One collision pair for batch decision."""
+
+    new_title: str
+    existing_title: str
+    existing_brief: str
+    collision_type: Literal["exact", "fuzzy"]
+    new_brief: str = ""
+
+
+class CollisionDecision(BaseModel):
+    """Decision for one collision pair."""
+
+    new_title: str
+    action: Literal["MERGE", "SKIP"]
+    reason: str
+
+
+class BatchCollisionDecision(BaseModel):
+    """LLM output: merge/skip decisions for all collision pairs in a batch."""
+
+    decisions: list[CollisionDecision]
+
+
 class IngestResult(BaseModel):
     """LLM output: all pages to create from a single source."""
 

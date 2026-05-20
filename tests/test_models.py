@@ -231,3 +231,42 @@ class TestBriefField:
     def test_topic_match_decision_model(self) -> None:
         d = TopicMatchDecision(same_topic=True, reason="Both about Flash Attention.")
         assert d.same_topic is True
+
+
+class TestBatchCollisionModels:
+    def test_collision_pair_exact(self) -> None:
+        from src.models import CollisionPair
+
+        pair = CollisionPair(
+            new_title="Flash Attention v2",
+            existing_title="Flash Attention",
+            existing_brief="IO-aware attention algorithm.",
+            collision_type="exact",
+        )
+        assert pair.collision_type == "exact"
+        assert pair.new_brief == ""
+
+    def test_collision_pair_fuzzy(self) -> None:
+        from src.models import CollisionPair
+
+        pair = CollisionPair(
+            new_title="Attention Optimization",
+            existing_title="Flash Attention",
+            existing_brief="IO-aware attention algorithm.",
+            collision_type="fuzzy",
+            new_brief="Techniques for faster attention computation.",
+        )
+        assert pair.new_brief != ""
+
+    def test_batch_collision_decision(self) -> None:
+        from src.models import BatchCollisionDecision, CollisionDecision
+
+        decision = BatchCollisionDecision(
+            decisions=[
+                CollisionDecision(new_title="A", action="MERGE", reason="same topic"),
+                CollisionDecision(new_title="B", action="SKIP", reason="different focus"),
+            ]
+        )
+        assert len(decision.decisions) == 2
+        assert decision.decisions[0].action == "MERGE"
+        assert decision.decisions[1].action == "SKIP"
