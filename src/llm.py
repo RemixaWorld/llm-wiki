@@ -110,7 +110,7 @@ async def complete_structured(  # noqa: UP047
     for model, name, kwargs in providers:
         try:
             # JSON mode for providers where tool calling is incompatible
-            mode = instructor.Mode.JSON if name in {"ollama", "minimax"} else instructor.Mode.TOOLS
+            mode = instructor.Mode.JSON if name in {"ollama", "minimax", "deepseek"} else instructor.Mode.TOOLS
             client = instructor.from_litellm(litellm.acompletion, mode=mode)
 
             sem = get_llm_semaphore()
