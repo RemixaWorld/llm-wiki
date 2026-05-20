@@ -153,3 +153,52 @@ class TestCompleteStructured:
             )
 
         src.config._settings = None
+
+
+class TestLLMSemaphore:
+    @pytest.mark.asyncio
+    async def test_semaphore_limits_concurrency(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Global semaphore caps concurrent LLM API calls."""
+        monkeypatch.setenv("WIKI_MINIMAX_API_KEY", "")
+        monkeypatch.setenv("WIKI_GROQ_API_KEY", "")
+        monkeypatch.setenv("WIKI_GEMINI_API_KEY", "")
+        monkeypatch.setenv("WIKI_MAX_CONCURRENT_LLM", "2")
+
+        import src.config
+        import src.llm
+
+        src.config._settings = None
+        src.llm._semaphore = None
+
+        import asyncio
+
+        peak = 0
+        current = 0
+
+        async def mock_create(**kwargs: object) -> SimpleOutput:
+            nonlocal peak, current
+            current += 1
+            peak = max(peak, current)
+            await asyncio.sleep(0.05)
+            current -= 1
+            return SimpleOutput(answer="ok", confidence=0.9)
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = mock_create
+
+        with patch("src.llm.instructor.from_litellm", return_value=mock_client):
+            results = await asyncio.gather(
+                *[
+                    complete_structured(
+                        messages=[{"role": "user", "content": f"test {i}"}],
+                        response_model=SimpleOutput,
+                    )
+                    for i in range(5)
+                ],
+            )
+
+        assert len(results) == 5
+        assert peak <= 2  # never exceeded max_concurrent_llm
+
+        src.config._settings = None
+        src.llm._semaphore = None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TypeVar
 
@@ -17,6 +18,16 @@ T = TypeVar("T", bound=BaseModel)
 
 # Suppress litellm's verbose logging
 litellm.suppress_debug_info = True
+
+_semaphore: asyncio.Semaphore | None = None
+
+
+def get_llm_semaphore() -> asyncio.Semaphore:
+    """Return cached semaphore capped at max_concurrent_llm."""
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(get_settings().max_concurrent_llm)
+    return _semaphore
 
 
 def _get_providers() -> list[tuple[str, str, dict[str, str]]]:
@@ -92,13 +103,15 @@ async def complete_structured(  # noqa: UP047
             mode = instructor.Mode.JSON if name in {"ollama", "minimax"} else instructor.Mode.TOOLS
             client = instructor.from_litellm(litellm.acompletion, mode=mode)
 
-            result = await client.chat.completions.create(
-                model=model,
-                messages=messages,
-                response_model=response_model,
-                temperature=temperature,
-                **kwargs,
-            )
+            sem = get_llm_semaphore()
+            async with sem:
+                result = await client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    response_model=response_model,
+                    temperature=temperature,
+                    **kwargs,
+                )
             logger.info("llm complete provider=%s model=%s", name, model)
             return result
         except Exception as exc:
