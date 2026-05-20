@@ -58,7 +58,8 @@ def ingest(source: str, url: bool, fresh: bool) -> None:
 def ingest_all(pattern: str, fresh: bool) -> None:
     """Ingest all matching files from the sources directory."""
 
-    from src.config import get_settings
+    from pathlib import Path
+
     from src.ingest import run_ingest
 
     settings = get_settings()
@@ -69,24 +70,42 @@ def ingest_all(pattern: str, fresh: bool) -> None:
         click.secho(f"No files matching '{pattern}' in {settings.sources_dir}/", fg="yellow")
         return
 
-    click.echo(f"Found {len(sources)} source(s) to ingest.")
+    click.echo(f"Found {len(sources)} source(s) to ingest (concurrency={settings.max_concurrent_llm}).")
+
+    async def _ingest_all_concurrent() -> list:
+        semaphore = asyncio.Semaphore(settings.max_concurrent_llm)
+
+        async def _ingest_one(src_path: Path):
+            async with semaphore:
+                click.echo(f"\nIngesting: {src_path.name}")
+                return await run_ingest(str(src_path), fresh=fresh)
+
+        return await asyncio.gather(
+            *[_ingest_one(s) for s in sources],
+            return_exceptions=True,
+        )
+
+    results = asyncio.run(_ingest_all_concurrent())
 
     total_pages = 0
     total_errors = 0
 
-    for src_path in sources:
-        click.echo(f"\nIngesting: {src_path.name}")
-        result = asyncio.run(run_ingest(str(src_path), fresh=fresh))
-        written = result.get("written_paths", [])
-        errors = result.get("errors", [])
-
-        if errors:
-            click.secho(f"  Errors: {len(errors)}", fg="red")
-            for err in errors:
-                click.echo(f"    - {err}")
-            total_errors += len(errors)
+    for src_path, result in zip(sources, results):
+        if isinstance(result, Exception):
+            click.secho(f"  {src_path.name}: FAILED - {result}", fg="red")
+            total_errors += 1
         else:
-            click.secho(f"  Created {len(written)} pages", fg="green")
+            written = result.get("written_paths", [])
+            errors = result.get("errors", [])
+
+            if errors:
+                click.secho(f"  {src_path.name}: {len(errors)} error(s)", fg="red")
+                for err in errors:
+                    click.echo(f"    - {err}")
+                total_errors += len(errors)
+
+            if written:
+                click.secho(f"  {src_path.name}: {len(written)} pages created", fg="green")
             total_pages += len(written)
 
     click.echo()
