@@ -17,6 +17,7 @@ class SimpleOutput(BaseModel):
 
 class TestGetProviders:
     def test_ollama_always_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("WIKI_LLM_PROVIDER", "")
         monkeypatch.setenv("WIKI_MINIMAX_API_KEY", "")
         monkeypatch.setenv("WIKI_DEEPSEEK_API_KEY", "")
         monkeypatch.setenv("WIKI_GROQ_API_KEY", "")
@@ -35,6 +36,7 @@ class TestGetProviders:
         src.config._settings = None
 
     def test_groq_added_when_key_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("WIKI_LLM_PROVIDER", "")
         monkeypatch.setenv("WIKI_MINIMAX_API_KEY", "")
         monkeypatch.setenv("WIKI_DEEPSEEK_API_KEY", "")
         monkeypatch.setenv("WIKI_GROQ_API_KEY", "test-key-123")
@@ -51,6 +53,7 @@ class TestGetProviders:
         src.config._settings = None
 
     def test_provider_order(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("WIKI_LLM_PROVIDER", "")
         monkeypatch.setenv("WIKI_MINIMAX_API_KEY", "mm-key")
         monkeypatch.setenv("WIKI_DEEPSEEK_API_KEY", "ds-key")
         monkeypatch.setenv("WIKI_GROQ_API_KEY", "groq-key")
@@ -67,6 +70,7 @@ class TestGetProviders:
         src.config._settings = None
 
     def test_deepseek_between_minimax_and_groq(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("WIKI_LLM_PROVIDER", "")
         monkeypatch.setenv("WIKI_MINIMAX_API_KEY", "")
         monkeypatch.setenv("WIKI_DEEPSEEK_API_KEY", "ds-key")
         monkeypatch.setenv("WIKI_GROQ_API_KEY", "groq-key")
