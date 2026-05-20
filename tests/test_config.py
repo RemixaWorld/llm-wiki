@@ -178,7 +178,9 @@ class TestIngestMode:
         src.config._settings = None
         src.config._schema_cache = None
 
-    def test_get_ingest_mode_comprehensive(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_get_ingest_mode_comprehensive(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         import src.config
 
         src.config._settings = None
@@ -195,7 +197,9 @@ class TestIngestMode:
         src.config._settings = None
         src.config._schema_cache = None
 
-    def test_get_ingest_mode_defaults_to_focused(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_get_ingest_mode_defaults_to_focused(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         import src.config
 
         src.config._settings = None
@@ -212,7 +216,9 @@ class TestIngestMode:
         src.config._settings = None
         src.config._schema_cache = None
 
-    def test_get_ingest_mode_invalid_value_defaults(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_get_ingest_mode_invalid_value_defaults(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         import src.config
 
         src.config._settings = None

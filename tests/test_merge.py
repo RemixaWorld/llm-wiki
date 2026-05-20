@@ -506,8 +506,12 @@ class TestBatchCollisionCheck:
 
         expected = BatchCollisionDecision(
             decisions=[
-                CollisionDecision(new_title="Flash Attention v2", action="MERGE", reason="same topic"),
-                CollisionDecision(new_title="Tiling Strategy", action="SKIP", reason="different focus"),
+                CollisionDecision(
+                    new_title="Flash Attention v2", action="MERGE", reason="same topic"
+                ),
+                CollisionDecision(
+                    new_title="Tiling Strategy", action="SKIP", reason="different focus"
+                ),
             ]
         )
 

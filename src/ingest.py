@@ -13,9 +13,10 @@ from langgraph.graph import END, StateGraph
 from src.config import Settings, get_settings
 from src.extract import chunk_text, count_tokens, extract_source
 from src.llm import complete_structured
-from src.merge import brief_merge_check, merge_page, topic_match_check
+from src.merge import batch_collision_check, merge_page
 from src.models import (
     Checkpoint,
+    CollisionPair,
     GeneratedPage,
     IngestResult,
     WikiFrontmatter,
@@ -328,103 +329,93 @@ async def process_batches_node(state: IngestState) -> IngestState:
             today = date.today()
             batch_titles: list[str] = []
             batch_briefs: dict[str, str] = {}
-            # 1b: collect brief_idx.add() calls and batch them after the loop
+            # collect brief_idx.add() calls and batch them after the loop
             batch_brief_adds: list[tuple[str, str]] = []
+
+            # Phase 1: Collect collision pairs and new pages
+            collision_pairs: list[CollisionPair] = []
+            collision_existing: dict[str, WikiPage] = {}  # new_title -> existing page
+            collision_gen_pages: dict[str, GeneratedPage] = {}  # new_title -> gen page
+            new_pages: list[GeneratedPage] = []
+
             for gen_page in all_pages:
-                # Step 1: exact collision check
+                # Exact collision
                 existing_page = get_page_by_title(gen_page.title, settings.wiki_dir)
 
                 if existing_page is not None:
-                    # 1c: skip brief_merge_check when existing page has empty brief
-                    if existing_page.frontmatter.brief:
-                        decision = await brief_merge_check(
-                            existing_brief=existing_page.frontmatter.brief,
+                    collision_pairs.append(
+                        CollisionPair(
+                            new_title=gen_page.title,
                             existing_title=existing_page.frontmatter.title,
-                            new_body=gen_page.body,
+                            existing_brief=existing_page.frontmatter.brief,
+                            collision_type="exact",
+                            new_brief=gen_page.brief,
                         )
-                        if decision.action == "SKIP":
-                            logger.info(
-                                "brief skip title=%s reason=%s",
-                                gen_page.title,
-                                decision.reason,
-                            )
-                            path = title_to_path(gen_page.title)
-                            all_written.append(path)
-                            batch_titles.append(gen_page.title)
-                            batch_briefs[gen_page.title] = gen_page.brief
-                            continue
-
-                    # No brief or MERGE → proceed to merge_page
-                    merged_fm, merged_body = await merge_page(
-                        existing_page,
-                        gen_page,
-                        source_path,
                     )
-                    path = write_page(merged_fm, merged_body, settings.wiki_dir)
-                    batch_brief_adds.append((path, merged_fm.brief))
+                    collision_existing[gen_page.title] = existing_page
+                    collision_gen_pages[gen_page.title] = gen_page
+
                 else:
-                    # Step 2: fuzzy collision check via BM25 brief search
+                    # Fuzzy collision
                     fuzzy_match = _check_fuzzy_collision(
                         brief_idx,
                         gen_page.brief,
                         settings.wiki_dir,
                     )
-
                     if fuzzy_match is not None:
-                        # Scenario B: brief vs brief → topic match
-                        fuzzy_page = fuzzy_match
-                        topic_decision = await topic_match_check(
-                            existing_title=fuzzy_page.frontmatter.title,
-                            existing_brief=fuzzy_page.frontmatter.brief,
-                            new_title=gen_page.title,
-                            new_brief=gen_page.brief,
+                        collision_pairs.append(
+                            CollisionPair(
+                                new_title=gen_page.title,
+                                existing_title=fuzzy_match.frontmatter.title,
+                                existing_brief=fuzzy_match.frontmatter.brief,
+                                collision_type="fuzzy",
+                                new_brief=gen_page.brief,
+                            )
                         )
-                        if topic_decision.same_topic:
-                            # Same topic → Scenario A with full context
-                            merge_decision = await brief_merge_check(
-                                existing_brief=fuzzy_page.frontmatter.brief,
-                                existing_title=fuzzy_page.frontmatter.title,
-                                new_body=gen_page.body,
-                            )
-                            if merge_decision.action == "MERGE":
-                                merged_fm, merged_body = await merge_page(
-                                    fuzzy_page,
-                                    gen_page,
-                                    source_path,
-                                )
-                                path = write_page(merged_fm, merged_body, settings.wiki_dir)
-                                batch_brief_adds.append((path, merged_fm.brief))
-                            else:
-                                logger.info(
-                                    "brief skip (fuzzy) title=%s reason=%s",
-                                    gen_page.title,
-                                    merge_decision.reason,
-                                )
-                                path = title_to_path(gen_page.title)
-                        else:
-                            # Different topic → new page
-                            path = _write_new_page(
-                                gen_page,
-                                source_path,
-                                today,
-                                settings,
-                            )
-                            batch_brief_adds.append((path, gen_page.brief))
+                        collision_existing[gen_page.title] = fuzzy_match
+                        collision_gen_pages[gen_page.title] = gen_page
                     else:
-                        # No collision at all → new page
-                        path = _write_new_page(
-                            gen_page,
-                            source_path,
-                            today,
-                            settings,
-                        )
-                        batch_brief_adds.append((path, gen_page.brief))
+                        # No collision → new page
+                        new_pages.append(gen_page)
 
+            # Phase 2: Write new pages immediately
+            for gen_page in new_pages:
+                path = _write_new_page(gen_page, source_path, today, settings)
                 all_written.append(path)
                 batch_titles.append(gen_page.title)
                 batch_briefs[gen_page.title] = gen_page.brief
+                batch_brief_adds.append((path, gen_page.brief))
 
-            # 1b: batch-add all briefs to the index after processing all pages
+            # Phase 3: Batch collision decisions (1 LLM call)
+            if collision_pairs:
+                batch_decision = await batch_collision_check(collision_pairs)
+                for decision in batch_decision.decisions:
+                    gen_page = collision_gen_pages.get(decision.new_title)
+                    existing_page = collision_existing.get(decision.new_title)
+                    if gen_page is None or existing_page is None:
+                        continue
+
+                    if decision.action == "MERGE":
+                        merged_fm, merged_body = await merge_page(
+                            existing_page,
+                            gen_page,
+                            source_path,
+                        )
+                        path = write_page(merged_fm, merged_body, settings.wiki_dir)
+                        batch_brief_adds.append((path, merged_fm.brief))
+                    else:
+                        logger.info(
+                            "batch skip title=%s reason=%s",
+                            gen_page.title,
+                            decision.reason,
+                        )
+                        path = title_to_path(gen_page.title)
+
+                    all_written.append(path)
+                    batch_titles.append(gen_page.title)
+                    batch_briefs[gen_page.title] = gen_page.brief
+
+            # Phase 4: Add to BriefIndex after batch
             for add_path, add_brief in batch_brief_adds:
                 brief_idx.add(add_path, add_brief)
 

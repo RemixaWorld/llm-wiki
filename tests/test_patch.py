@@ -132,7 +132,7 @@ class TestFuzzyReplace:
         assert result == "AAA\nBBB  \nline3"
 
     def test_curly_quote_difference(self) -> None:
-        body = 'He said “hello”'
+        body = "He said “hello”"
         result = _fuzzy_replace(body, 'He said "hello"', "She replied", replace_all=False)
         assert result == "She replied"
 

@@ -17,12 +17,13 @@ from src.ingest import (
     run_ingest,
 )
 from src.models import (
+    BatchCollisionDecision,
     BriefOutput,
     Checkpoint,
+    CollisionDecision,
     Confidence,
     GeneratedPage,
     IngestResult,
-    MergeDecision,
     PageType,
     WikiFrontmatter,
 )
@@ -358,9 +359,15 @@ class TestProcessBatchesMerge:
             patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
         ):
             mock_llm.return_value = mock_ingest_result
-            # brief_merge_check → MergeDecision, then merge_page → PatchedPage, BriefOutput
+            # batch_collision_check → BatchCollisionDecision, then merge_page → PatchedPage, BriefOutput
             mock_merge_llm.side_effect = [
-                MergeDecision(action="MERGE", reason="new pre-training info"),
+                BatchCollisionDecision(
+                    decisions=[
+                        CollisionDecision(
+                            new_title="BERT", action="MERGE", reason="new pre-training info"
+                        ),
+                    ]
+                ),
                 mock_patched,
                 BriefOutput(brief="BERT: merged brief."),
             ]
@@ -553,9 +560,17 @@ class TestCrossSourceMerge:
             patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
         ):
             mock_llm.return_value = source_b_result
-            # brief_merge_check → MergeDecision, then merge_page → PatchedPage, BriefOutput
+            # batch_collision_check → BatchCollisionDecision, then merge_page → PatchedPage, BriefOutput
             mock_merge_llm.side_effect = [
-                MergeDecision(action="MERGE", reason="new pre-training details from source B"),
+                BatchCollisionDecision(
+                    decisions=[
+                        CollisionDecision(
+                            new_title="BERT",
+                            action="MERGE",
+                            reason="new pre-training details from source B",
+                        ),
+                    ]
+                ),
                 mock_patched,
                 BriefOutput(brief="BERT: bidirectional encoder with pre-training."),
             ]
@@ -857,21 +872,145 @@ class TestEmptyBriefShortcut:
         ):
             mock_llm.return_value = ingest_result
 
-            # Should NOT call brief_merge_check at all (no MergeDecision call)
-            # Only merge_page calls: PatchedPage + BriefOutput
+            # batch_collision_check (1 call) + merge_page (patch + brief regen)
             mock_merge_llm.side_effect = [
+                BatchCollisionDecision(
+                    decisions=[
+                        CollisionDecision(
+                            new_title="BERT", action="MERGE", reason="empty brief, merge by default"
+                        ),
+                    ]
+                ),
                 mock_patched,
                 BriefOutput(brief="BERT: merged brief."),
             ]
             result = await process_batches_node(state)
 
-        # Should have merged without calling brief_merge_check
+        # Should have merged without separate brief_merge_check calls
         assert "errors" not in result or len(result.get("errors", [])) == 0
         bert_page = read_page("bert.md", wiki_dir)
         assert bert_page.frontmatter.created == date(2026, 1, 1)
 
-        # Verify brief_merge_check was NOT called (only 2 merge LLM calls: patch + brief)
-        assert mock_merge_llm.call_count == 2
+        # Verify only 3 merge LLM calls: batch_collision_check + patch + brief
+        assert mock_merge_llm.call_count == 3
+
+        src.config._settings = None
+
+
+class TestBatchCollisionFlow:
+    @pytest.mark.asyncio
+    async def test_multiple_collisions_single_llm_call(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two exact collisions → 1 batch_collision_check call (not 2 brief_merge_check calls)."""
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        # Pre-create two existing pages with briefs
+        from src.wiki import write_page
+
+        fm1 = WikiFrontmatter(
+            title="Flash Attention",
+            page_type=PageType.CONCEPT,
+            sources=["old.pdf"],
+            tags=["attention"],
+            created=date(2026, 1, 1),
+            updated=date(2026, 1, 1),
+            confidence=Confidence.HIGH,
+            brief="IO-aware attention algorithm.",
+        )
+        write_page(fm1, "# Flash Attention\n\nBody.", wiki_dir)
+        fm2 = WikiFrontmatter(
+            title="BERT",
+            page_type=PageType.ENTITY,
+            sources=["old.pdf"],
+            tags=["nlp"],
+            created=date(2026, 1, 1),
+            updated=date(2026, 1, 1),
+            confidence=Confidence.HIGH,
+            brief="Bidirectional encoder.",
+        )
+        write_page(fm2, "# BERT\n\nBody.", wiki_dir)
+
+        # LLM generates pages that collide with both
+        ingest_result = IngestResult(
+            source_summary=GeneratedPage(
+                title="Summary",
+                page_type=PageType.SOURCE_SUMMARY,
+                tags=[],
+                confidence=Confidence.HIGH,
+                body="Summary.",
+            ),
+            concept_pages=[
+                GeneratedPage(
+                    title="Flash Attention",
+                    page_type=PageType.CONCEPT,
+                    tags=["attention"],
+                    confidence=Confidence.HIGH,
+                    body="# Flash Attention\n\nNew details.",
+                    brief="Updated FA info.",
+                ),
+            ],
+            entity_pages=[
+                GeneratedPage(
+                    title="BERT",
+                    page_type=PageType.ENTITY,
+                    tags=["nlp"],
+                    confidence=Confidence.HIGH,
+                    body="# BERT\n\nNew BERT details.",
+                    brief="Updated BERT info.",
+                ),
+            ],
+        )
+
+        from src.models import EditOp, PatchedPage
+
+        mock_batch_decision = BatchCollisionDecision(
+            decisions=[
+                CollisionDecision(new_title="Flash Attention", action="MERGE", reason="same topic"),
+                CollisionDecision(new_title="BERT", action="SKIP", reason="already covered"),
+            ]
+        )
+        mock_patched = PatchedPage(
+            edits=[
+                EditOp(
+                    old_string="# Flash Attention\n\nBody.",
+                    new_string="# Flash Attention\n\nNew details.",
+                )
+            ],
+            tags_to_add=[],
+            confidence=Confidence.HIGH,
+        )
+
+        with (
+            patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm,
+            patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
+        ):
+            mock_llm.return_value = ingest_result
+            # batch_collision_check (1 call) + merge_page for FA (patch + brief regen)
+            mock_merge_llm.side_effect = [
+                mock_batch_decision,
+                mock_patched,
+                BriefOutput(brief="FA: updated with new details."),
+            ]
+            result = await process_batches_node(
+                {
+                    "chunks": ["Text about FA and BERT."],
+                    "source_path": "test.txt",
+                    "source_title": "Test",
+                    "fresh": True,
+                }
+            )
+
+        # Summary written, FA merged, BERT skipped (but still tracked)
+        assert "errors" not in result or len(result.get("errors", [])) == 0
+        assert len(result["written_paths"]) == 3  # summary + merged FA + skipped BERT
 
         src.config._settings = None
 
