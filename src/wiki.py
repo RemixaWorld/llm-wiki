@@ -63,6 +63,7 @@ def parse_frontmatter(raw: str) -> WikiFrontmatter:
         updated=meta.get("updated") or today,
         confidence=Confidence(meta.get("confidence", "medium")),
         related=meta.get("related", []),
+        brief=meta.get("brief", ""),
     )
 
 
@@ -76,6 +77,7 @@ def render_page(page: WikiFrontmatter, body: str) -> str:
         "created": page.created.isoformat(),
         "updated": page.updated.isoformat(),
         "confidence": page.confidence.value,
+        "brief": page.brief,
     }
     if page.related:
         meta["related"] = page.related

@@ -232,6 +232,67 @@ class TestGetPageByTitle:
         assert get_page_by_title("Nonexistent", tmp_wiki_dir) is None
 
 
+class TestBriefFrontmatter:
+    def test_parse_frontmatter_with_brief(self) -> None:
+        raw = (
+            "---\n"
+            "title: Flash Attention\n"
+            "type: concept\n"
+            "brief: IO-aware exact attention via tiling.\n"
+            "sources: []\n"
+            "tags: [attention]\n"
+            "created: 2026-05-20\n"
+            "updated: 2026-05-20\n"
+            "confidence: high\n"
+            "---\n\nBody text."
+        )
+        fm = parse_frontmatter(raw)
+        assert fm.brief == "IO-aware exact attention via tiling."
+
+    def test_parse_frontmatter_without_brief(self) -> None:
+        raw = (
+            "---\n"
+            "title: Test\n"
+            "type: concept\n"
+            "sources: []\n"
+            "tags: []\n"
+            "created: 2026-05-20\n"
+            "updated: 2026-05-20\n"
+            "confidence: high\n"
+            "---\n\nBody text."
+        )
+        fm = parse_frontmatter(raw)
+        assert fm.brief == ""
+
+    def test_render_page_includes_brief(self) -> None:
+        fm = WikiFrontmatter(
+            title="Flash Attention",
+            page_type=PageType.CONCEPT,
+            brief="IO-aware exact attention via tiling.",
+            sources=["test.pdf"],
+            tags=["attention"],
+            created=date(2026, 5, 20),
+            updated=date(2026, 5, 20),
+            confidence=Confidence.HIGH,
+        )
+        raw = render_page(fm, "Body text.")
+        assert "brief: IO-aware exact attention via tiling." in raw
+
+    def test_render_page_empty_brief(self) -> None:
+        fm = WikiFrontmatter(
+            title="Test",
+            page_type=PageType.CONCEPT,
+            brief="",
+            sources=["test.pdf"],
+            tags=[],
+            created=date(2026, 5, 20),
+            updated=date(2026, 5, 20),
+            confidence=Confidence.HIGH,
+        )
+        raw = render_page(fm, "Body text.")
+        assert "brief:" in raw
+
+
 class TestReadAllPages:
     def test_reads_all(self, tmp_wiki_dir: Path) -> None:
         pages = read_all_pages(tmp_wiki_dir)
