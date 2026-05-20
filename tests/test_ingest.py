@@ -1253,3 +1253,120 @@ class TestBriefAnalysis:
             wiki_dir=tmp_path,
         )
         assert result is None
+
+
+class TestParallelMerge:
+    @pytest.mark.asyncio
+    async def test_multiple_merges_run_concurrently(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two MERGE decisions execute in parallel via asyncio.gather."""
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        # Pre-create two existing pages
+        for title, body in [("Flash Attention", "# Flash Attention\n\nBody FA."), ("BERT", "# BERT\n\nBody BERT.")]:
+            write_page(
+                WikiFrontmatter(
+                    title=title,
+                    page_type=PageType.CONCEPT,
+                    sources=["old.pdf"],
+                    tags=[],
+                    created=date(2026, 1, 1),
+                    updated=date(2026, 1, 1),
+                    confidence=Confidence.HIGH,
+                    brief=f"Existing {title} page.",
+                ),
+                body,
+                wiki_dir,
+            )
+
+        # LLM generates both pages (exact collision)
+        ingest_result = IngestResult(
+            source_summary=GeneratedPage(
+                title="Summary",
+                page_type=PageType.SOURCE_SUMMARY,
+                tags=[],
+                confidence=Confidence.HIGH,
+                body="Summary.",
+                brief="Source summary.",
+            ),
+            concept_pages=[
+                GeneratedPage(
+                    title="Flash Attention",
+                    page_type=PageType.CONCEPT,
+                    tags=["attention"],
+                    confidence=Confidence.HIGH,
+                    body="# Flash Attention\n\nNew FA details.",
+                    brief="Updated FA.",
+                ),
+            ],
+            entity_pages=[
+                GeneratedPage(
+                    title="BERT",
+                    page_type=PageType.ENTITY,
+                    tags=["nlp"],
+                    confidence=Confidence.HIGH,
+                    body="# BERT\n\nNew BERT details.",
+                    brief="Updated BERT.",
+                ),
+            ],
+        )
+
+        from src.models import EditOp, PatchedPage
+
+        mock_batch_decision = BatchCollisionDecision(
+            decisions=[
+                CollisionDecision(new_title="Flash Attention", action="MERGE", reason="same"),
+                CollisionDecision(new_title="BERT", action="MERGE", reason="same"),
+            ]
+        )
+        mock_patched_fa = PatchedPage(
+            edits=[EditOp(old_string="# Flash Attention\n\nBody FA.", new_string="# Flash Attention\n\nNew FA details.")],
+            tags_to_add=[],
+            confidence=Confidence.HIGH,
+        )
+        mock_patched_bert = PatchedPage(
+            edits=[EditOp(old_string="# BERT\n\nBody BERT.", new_string="# BERT\n\nNew BERT details.")],
+            tags_to_add=[],
+            confidence=Confidence.HIGH,
+        )
+
+        async def tracked_merge_llm(*args, **kwargs):
+            if not hasattr(tracked_merge_llm, "call_idx"):
+                tracked_merge_llm.call_idx = 0
+            idx = tracked_merge_llm.call_idx
+            tracked_merge_llm.call_idx += 1
+
+            results = [mock_batch_decision,
+                       mock_patched_fa, BriefOutput(brief="FA brief."),
+                       mock_patched_bert, BriefOutput(brief="BERT brief.")]
+            if idx < len(results):
+                return results[idx]
+            return BriefOutput(brief="fallback")
+
+        state = {
+            "chunks": ["Text about FA and BERT."],
+            "source_path": "test.txt",
+            "source_title": "Test",
+            "fresh": True,
+        }
+
+        with (
+            patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm,
+            patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
+        ):
+            mock_llm.return_value = ingest_result
+            mock_merge_llm.side_effect = tracked_merge_llm
+            result = await process_batches_node(state)
+
+        assert "errors" not in result or len(result.get("errors", [])) == 0
+        assert len(result["written_paths"]) == 3  # summary + 2 merges
+
+        src.config._settings = None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, date, datetime
@@ -26,6 +27,7 @@ from src.search import BriefIndex
 from src.wiki import (
     extract_wikilinks,
     get_page_by_title,
+    get_page_lock,
     read_all_pages,
     read_page,
     title_to_path,
@@ -389,6 +391,11 @@ async def process_batches_node(state: IngestState) -> IngestState:
             if collision_pairs:
                 pair_types = {p.new_title: p.collision_type for p in collision_pairs}
                 batch_decision = await batch_collision_check(collision_pairs)
+
+                # Collect MERGE and SKIP tasks
+                merge_tasks: list[tuple[CollisionDecision, GeneratedPage, WikiPage]] = []
+                skip_fuzzy: list[tuple[CollisionDecision, GeneratedPage]] = []
+
                 for decision in batch_decision.decisions:
                     gen_page = collision_gen_pages.get(decision.new_title)
                     existing_page = collision_existing.get(decision.new_title)
@@ -398,30 +405,51 @@ async def process_batches_node(state: IngestState) -> IngestState:
                     collision_type = pair_types.get(decision.new_title, "exact")
 
                     if decision.action == "MERGE":
-                        merged_fm, merged_body = await merge_page(
-                            existing_page,
-                            gen_page,
-                            source_path,
-                        )
-                        path = write_page(merged_fm, merged_body, settings.wiki_dir)
-                        batch_brief_adds.append((path, merged_fm.brief))
-                        all_written.append(path)
-                        batch_titles.append(gen_page.title)
-                        batch_briefs[gen_page.title] = gen_page.brief
+                        merge_tasks.append((decision, gen_page, existing_page))
                     elif collision_type == "fuzzy":
-                        # SKIP on fuzzy = different topics, write as new page
-                        path = _write_new_page(gen_page, source_path, today, settings)
-                        batch_brief_adds.append((path, gen_page.brief))
-                        all_written.append(path)
-                        batch_titles.append(gen_page.title)
-                        batch_briefs[gen_page.title] = gen_page.brief
+                        skip_fuzzy.append((decision, gen_page))
                     else:
-                        # SKIP on exact = same title already exists, don't write
                         logger.info(
                             "batch skip title=%s reason=%s",
                             gen_page.title,
                             decision.reason,
                         )
+
+                # Execute merges in parallel with per-page locks
+                if merge_tasks:
+
+                    async def _merge_with_lock(
+                        task: tuple[CollisionDecision, GeneratedPage, WikiPage],
+                    ) -> tuple[WikiFrontmatter, str]:
+                        _, gp, ex = task
+                        page_path = title_to_path(ex.frontmatter.title)
+                        async with get_page_lock(page_path):
+                            return await merge_page(ex, gp, source_path)
+
+                    merge_results = await asyncio.gather(
+                        *[_merge_with_lock(t) for t in merge_tasks],
+                        return_exceptions=True,
+                    )
+
+                    for task, result in zip(merge_tasks, merge_results):
+                        decision, gen_page, _ = task
+                        if isinstance(result, Exception):
+                            errors.append(f"merge failed: {decision.new_title}: {result}")
+                            continue
+                        merged_fm, merged_body = result
+                        path = write_page(merged_fm, merged_body, settings.wiki_dir)
+                        batch_brief_adds.append((path, merged_fm.brief))
+                        all_written.append(path)
+                        batch_titles.append(gen_page.title)
+                        batch_briefs[gen_page.title] = gen_page.brief
+
+                # Handle fuzzy SKIPs (write as new pages)
+                for _, gen_page in skip_fuzzy:
+                    path = _write_new_page(gen_page, source_path, today, settings)
+                    batch_brief_adds.append((path, gen_page.brief))
+                    all_written.append(path)
+                    batch_titles.append(gen_page.title)
+                    batch_briefs[gen_page.title] = gen_page.brief
 
             # Phase 4: Add to BriefIndex after batch
             for add_path, add_brief in batch_brief_adds:
