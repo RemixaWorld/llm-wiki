@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     checkpoint_dir: Path = Path(".wiki-checkpoints")
     batch_size: int = Field(default=5, gt=0)
 
+    # Concurrency
+    max_concurrent_llm: int = Field(default=3, gt=0)
+
     # Search
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
