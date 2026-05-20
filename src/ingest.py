@@ -11,7 +11,7 @@ from typing import TypedDict
 from langgraph.graph import END, StateGraph
 
 from src.config import Settings, get_settings
-from src.extract import chunk_text, extract_source
+from src.extract import chunk_text, count_tokens, extract_source
 from src.llm import complete_structured
 from src.merge import brief_merge_check, merge_page, topic_match_check
 from src.models import (
@@ -101,35 +101,68 @@ def _build_batch_messages(
     batch_start: int,
     batch_size: int,
     source_title: str,
-    existing_titles: list[str],
+    existing_briefs: dict[str, str],
+    is_short: bool = False,
 ) -> list[dict[str, str]]:
     """Build LLM messages for a single batch of chunks.
 
-    Includes intra-source page titles so the LLM uses consistent titles.
+    Message layout optimized for prompt caching:
+    [system]  <- static (identical across all batches)
+    [user]    <- dynamic content ordered by stability
     """
-    from src.config import get_allowed_tags, get_ingest_prompt
+    from src.config import get_allowed_tags, get_ingest_mode, get_ingest_prompt
 
     batch = chunks[batch_start : batch_start + batch_size]
     combined = "\n\n---\n\n".join(batch)
 
+    # System prompt: fully static for caching
     system_prompt = get_ingest_prompt()
+
+    # User content: ordered by stability (stable prefix -> variable suffix)
+    user_parts: list[str] = []
+
+    # 1. Preferred tags (semi-static)
     allowed_tags = get_allowed_tags()
     if allowed_tags:
-        system_prompt += "\n\nPreferred tags (use these when applicable): " + ", ".join(
-            allowed_tags
+        user_parts.append("Preferred tags (use when applicable): " + ", ".join(allowed_tags))
+
+    # 2. Ingest mode instructions
+    ingest_mode = get_ingest_mode()
+    if ingest_mode == "focused":
+        user_parts.append(
+            "IMPORTANT: Generate only 1-3 concept_pages and 1-3 entity_pages. "
+            "Focus on the most important concepts and entities:\n"
+            "- Core topic/thesis of the source (not tangential mentions)\n"
+            "- Entities/concepts with standalone knowledge value "
+            "(worth their own page, not just an example)\n"
+            "- Knowledge not already covered by previously generated pages listed below. "
+            "Quality over quantity."
         )
 
-    user_content = (
+    # 3. Short text instruction
+    if is_short:
+        user_parts.append(
+            "This is a short source text. Only generate the source_summary. "
+            "Mention concepts and entities using [[WikiLink]] syntax within the body "
+            "--- do not create separate concept_pages or entity_pages."
+        )
+
+    # 4. Previously generated pages from this source (titles + briefs)
+    if existing_briefs:
+        pages_list = "\n".join(
+            f'  - "{title}": {brief}' for title, brief in existing_briefs.items()
+        )
+        user_parts.append(
+            f"Previously generated pages from this source:\n{pages_list}\n"
+            "Link to them using [[Title]] syntax. Avoid duplicating their content."
+        )
+
+    # 5. Source text (most variable — always last)
+    user_parts.append(
         f"Source: {source_title}\n\nCreate wiki pages from this source text:\n\n{combined}"
     )
-    if existing_titles:
-        user_content += (
-            f"\n\nThe following wiki pages already exist: {', '.join(existing_titles)}"
-            "\nLink to them using [[Title]] syntax where relevant."
-            "\nIf you have genuinely NEW information about an existing topic, you may"
-            " create a page with that title — it will be merged with existing content."
-            "\nOtherwise, prefer using [[Title]] links."
-        )
+
+    user_content = "\n\n".join(user_parts)
 
     return [
         {"role": "system", "content": system_prompt},
@@ -261,7 +294,11 @@ async def process_batches_node(state: IngestState) -> IngestState:
             batch_start=batch_idx * batch_size,
             batch_size=batch_size,
             source_title=source_title,
-            existing_titles=cp.generated_titles,
+            existing_briefs=cp.generated_briefs,
+            is_short=count_tokens(
+                "\n\n---\n\n".join(chunks[batch_idx * batch_size : (batch_idx + 1) * batch_size])
+            )
+            < 1000,
         )
 
         try:

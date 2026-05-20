@@ -379,7 +379,7 @@ class TestProcessBatchesMerge:
 
 
 class TestBuildBatchMessages:
-    def test_includes_existing_titles_in_prompt(self) -> None:
+    def test_includes_existing_briefs_in_prompt(self) -> None:
         from src.ingest import _build_batch_messages
 
         messages = _build_batch_messages(
@@ -387,14 +387,14 @@ class TestBuildBatchMessages:
             batch_start=0,
             batch_size=5,
             source_title="Test Source",
-            existing_titles=["Flash Attention", "Self-Attention"],
+            existing_briefs={"Flash Attention": "IO-aware exact attention algorithm."},
         )
 
         user_msg = messages[1]["content"]
         assert "Flash Attention" in user_msg
-        assert "Self-Attention" in user_msg
+        assert "IO-aware exact attention" in user_msg
 
-    def test_no_existing_titles_no_title_list(self) -> None:
+    def test_no_existing_briefs_no_title_list(self) -> None:
         from src.ingest import _build_batch_messages
 
         messages = _build_batch_messages(
@@ -402,11 +402,78 @@ class TestBuildBatchMessages:
             batch_start=0,
             batch_size=5,
             source_title="Test Source",
-            existing_titles=[],
+            existing_briefs={},
         )
 
         user_msg = messages[1]["content"]
-        assert "already exist" not in user_msg
+        assert "Previously generated" not in user_msg
+
+
+class TestBuildBatchMessagesV2:
+    def test_short_text_mode_instruction(self) -> None:
+        from src.ingest import _build_batch_messages
+
+        messages = _build_batch_messages(
+            chunks=["Very short text about transformers."],
+            batch_start=0,
+            batch_size=5,
+            source_title="Test",
+            existing_briefs={},
+            is_short=True,
+        )
+        user_msg = messages[1]["content"]
+        assert "only generate the source_summary" in user_msg.lower() or "only" in user_msg.lower()
+
+    def test_normal_text_no_short_instruction(self) -> None:
+        from src.ingest import _build_batch_messages
+
+        long_text = " ".join(["word"] * 2000)
+        messages = _build_batch_messages(
+            chunks=[long_text],
+            batch_start=0,
+            batch_size=5,
+            source_title="Test",
+            existing_briefs={},
+            is_short=False,
+        )
+        user_msg = messages[1]["content"]
+        assert "only generate" not in user_msg.lower()
+
+    def test_titles_and_briefs_in_prompt(self) -> None:
+        from src.ingest import _build_batch_messages
+
+        messages = _build_batch_messages(
+            chunks=["chunk text"],
+            batch_start=0,
+            batch_size=5,
+            source_title="Test",
+            existing_briefs={
+                "Flash Attention": "IO-aware exact attention algorithm.",
+                "Self-Attention": "Mechanism for computing weighted sums.",
+            },
+            is_short=False,
+        )
+        user_msg = messages[1]["content"]
+        assert "Flash Attention" in user_msg
+        assert "IO-aware exact attention" in user_msg
+        assert "Self-Attention" in user_msg
+
+    def test_system_prompt_is_static(self) -> None:
+        """System prompt should not contain dynamic content (for caching)."""
+        from src.ingest import _build_batch_messages
+
+        messages = _build_batch_messages(
+            chunks=["chunk1"],
+            batch_start=0,
+            batch_size=5,
+            source_title="Source A",
+            existing_briefs={"Title": "Brief"},
+            is_short=False,
+        )
+        system_msg = messages[0]["content"]
+        assert "Title" not in system_msg
+        assert "Brief" not in system_msg
+        assert "Source A" not in system_msg
 
 
 class TestCrossSourceMerge:
@@ -811,8 +878,8 @@ class TestEmptyBriefShortcut:
 
 class TestBriefAnalysis:
     @pytest.mark.asyncio
-    async def test_build_batch_messages_no_wiki_titles(self) -> None:
-        """_build_batch_messages no longer accepts wiki_titles parameter."""
+    async def test_build_batch_messages_with_briefs(self) -> None:
+        """_build_batch_messages uses existing_briefs dict with titles and briefs."""
         from src.ingest import _build_batch_messages
 
         messages = _build_batch_messages(
@@ -820,14 +887,17 @@ class TestBriefAnalysis:
             batch_start=0,
             batch_size=2,
             source_title="Test Paper",
-            existing_titles=["Flash Attention", "Self-Attention"],
+            existing_briefs={
+                "Flash Attention": "IO-aware exact attention algorithm.",
+                "Self-Attention": "Mechanism for computing weighted sums.",
+            },
         )
         assert "Flash Attention" in messages[1]["content"]
         assert "Self-Attention" in messages[1]["content"]
 
     @pytest.mark.asyncio
-    async def test_build_batch_messages_empty_existing_titles(self) -> None:
-        """No existing titles → no title list injected."""
+    async def test_build_batch_messages_empty_existing_briefs(self) -> None:
+        """No existing briefs → no previously generated pages list injected."""
         from src.ingest import _build_batch_messages
 
         messages = _build_batch_messages(
@@ -835,9 +905,9 @@ class TestBriefAnalysis:
             batch_start=0,
             batch_size=1,
             source_title="Test",
-            existing_titles=[],
+            existing_briefs={},
         )
-        assert "already exist" not in messages[1]["content"]
+        assert "Previously generated" not in messages[1]["content"]
 
     def test_check_fuzzy_collision_returns_page(self, tmp_path: Path) -> None:
         """Fuzzy collision via BM25 returns matched WikiPage."""

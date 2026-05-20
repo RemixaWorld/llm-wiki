@@ -147,29 +147,35 @@ class TestSourceModified:
 class TestBuildBatchMessages:
     """Tests for _build_batch_messages helper."""
 
-    def test_no_existing_titles(self):
+    def test_no_existing_briefs(self):
         chunks = ["chunk1", "chunk2"]
         with patch("src.config.load_schema", return_value={}):
-            messages = _build_batch_messages(chunks, 0, 5, "Test Source", [])
+            messages = _build_batch_messages(chunks, 0, 5, "Test Source", {})
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
         assert "Test Source" in messages[1]["content"]
         assert "chunk1" in messages[1]["content"]
-        assert "already exist" not in messages[1]["content"]
+        assert "Previously generated" not in messages[1]["content"]
 
-    def test_with_existing_titles(self):
+    def test_with_existing_briefs(self):
         chunks = ["chunk1"]
         with patch("src.config.load_schema", return_value={}):
-            messages = _build_batch_messages(chunks, 0, 5, "Test Source", ["BERT", "Transformer"])
-        assert "already exist" in messages[1]["content"]
+            messages = _build_batch_messages(
+                chunks,
+                0,
+                5,
+                "Test Source",
+                {"BERT": "Bidirectional encoder.", "Transformer": "Attention-based model."},
+            )
+        assert "Previously generated" in messages[1]["content"]
         assert "BERT" in messages[1]["content"]
         assert "Transformer" in messages[1]["content"]
 
     def test_slicing(self):
         chunks = [f"chunk{i}" for i in range(12)]
         with patch("src.config.load_schema", return_value={}):
-            messages = _build_batch_messages(chunks, 5, 5, "Test Source", [])
+            messages = _build_batch_messages(chunks, 5, 5, "Test Source", {})
         assert "chunk5" in messages[1]["content"]
         assert "chunk9" in messages[1]["content"]
         assert "chunk10" not in messages[1]["content"]
