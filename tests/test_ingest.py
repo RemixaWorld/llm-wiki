@@ -17,6 +17,7 @@ from src.ingest import (
     run_ingest,
 )
 from src.models import (
+    BriefOutput,
     Checkpoint,
     Confidence,
     GeneratedPage,
@@ -355,7 +356,10 @@ class TestProcessBatchesMerge:
             patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
         ):
             mock_llm.return_value = mock_ingest_result
-            mock_merge_llm.return_value = mock_patched
+            mock_merge_llm.side_effect = [
+                mock_patched,
+                BriefOutput(brief="BERT: merged brief."),
+            ]
             result = await process_batches_node(state)
 
         assert "errors" not in result or len(result.get("errors", [])) == 0
@@ -504,7 +508,10 @@ class TestCrossSourceMerge:
             patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
         ):
             mock_llm.return_value = source_b_result
-            mock_merge_llm.return_value = mock_patched
+            mock_merge_llm.side_effect = [
+                mock_patched,
+                BriefOutput(brief="BERT: bidirectional encoder with pre-training."),
+            ]
             result = await process_batches_node(state)
 
         assert "errors" not in result or len(result.get("errors", [])) == 0

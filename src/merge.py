@@ -32,6 +32,7 @@ def _merge_frontmatter(
     merged_tags: list[str],
     merged_confidence: Confidence,
     source_path: str,
+    brief: str = "",
 ) -> tuple[WikiFrontmatter, str]:
     """Merge frontmatter fields from existing page and new generated page.
 
@@ -72,6 +73,7 @@ def _merge_frontmatter(
         updated=date.today(),
         confidence=confidence,
         related=related,
+        brief=brief or existing_fm.brief,
     )
 
     return fm, merged_body
@@ -248,14 +250,18 @@ async def merge_page(
                 attempt + 1,
                 len(result.edits),
             )
-            return _merge_frontmatter(
+            merged_tags = list(existing.frontmatter.tags) + result.tags_to_add
+            merged_confidence = result.confidence
+            fm, merged_body = _merge_frontmatter(
                 existing_fm=existing.frontmatter,
                 new_page=new_page,
                 merged_body=body,
-                merged_tags=list(existing.frontmatter.tags) + result.tags_to_add,
-                merged_confidence=result.confidence,
+                merged_tags=merged_tags,
+                merged_confidence=merged_confidence,
                 source_path=source_path,
             )
+            fm.brief = await regenerate_brief(existing.frontmatter.title, merged_body)
+            return fm, merged_body
         except PatchError as e:
             last_error = str(e)
             logger.warning(
@@ -275,7 +281,7 @@ async def merge_page(
     )
 
     logger.info("rewrote page title=%s", existing.frontmatter.title)
-    return _merge_frontmatter(
+    fm, merged_body = _merge_frontmatter(
         existing_fm=existing.frontmatter,
         new_page=new_page,
         merged_body=result.body,
@@ -283,3 +289,5 @@ async def merge_page(
         merged_confidence=result.confidence,
         source_path=source_path,
     )
+    fm.brief = await regenerate_brief(existing.frontmatter.title, merged_body)
+    return fm, merged_body

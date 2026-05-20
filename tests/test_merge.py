@@ -273,12 +273,15 @@ class TestMergePagePatchSuccess:
         )
 
         with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
-            mock_llm.return_value = mock_patched
+            mock_llm.side_effect = [
+                mock_patched,
+                BriefOutput(brief="BERT with masked language modeling."),
+            ]
             fm, body = await merge_page(existing_page, new_page, "articles/bert-guide.md")
 
         assert "masked language modeling" in body
         assert "pre-training" in fm.tags
-        assert mock_llm.call_count == 1
+        assert mock_llm.call_count == 2  # 1 patch + 1 brief regen
 
     @pytest.mark.asyncio
     async def test_patch_retries_on_failure_then_succeeds(self) -> None:
@@ -318,11 +321,15 @@ class TestMergePagePatchSuccess:
         )
 
         with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
-            mock_llm.side_effect = [bad_patch, good_patch]
+            mock_llm.side_effect = [
+                bad_patch,
+                good_patch,
+                BriefOutput(brief="Updated BERT content."),
+            ]
             fm, body = await merge_page(existing_page, new_page, "new.pdf")
 
         assert body == "# BERT\n\nUpdated content."
-        assert mock_llm.call_count == 2
+        assert mock_llm.call_count == 3  # 2 patch attempts + 1 brief regen
 
     @pytest.mark.asyncio
     async def test_falls_back_to_rewrite_after_3_patch_failures(self) -> None:
@@ -362,11 +369,17 @@ class TestMergePagePatchSuccess:
         )
 
         with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
-            mock_llm.side_effect = [bad_patch, bad_patch, bad_patch, mock_merged]
+            mock_llm.side_effect = [
+                bad_patch,
+                bad_patch,
+                bad_patch,
+                mock_merged,
+                BriefOutput(brief="BERT: bidirectional encoder with updates."),
+            ]
             fm, body = await merge_page(existing_page, new_page, "new.pdf")
 
         assert "Updated content" in body
-        assert mock_llm.call_count == 4  # 3 patch + 1 rewrite
+        assert mock_llm.call_count == 5  # 3 patch + 1 rewrite + 1 brief regen
 
 
 class TestBriefAnalysis:
@@ -464,3 +477,107 @@ class TestBriefAnalysis:
 
         assert brief == "Updated brief about FA1 and FA2."
         assert mock_llm.call_count == 1
+
+
+class TestMergePageWithBrief:
+    @pytest.mark.asyncio
+    async def test_merge_page_regenerates_brief(self) -> None:
+        """merge_page should regenerate brief after successful patch merge."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.models import EditOp, PatchedPage
+
+        existing_page = WikiPage(
+            path="flash-attention.md",
+            frontmatter=WikiFrontmatter(
+                title="Flash Attention",
+                page_type=PageType.CONCEPT,
+                brief="IO-aware exact attention via tiling.",
+                sources=["papers/fa.pdf"],
+                tags=["attention"],
+                created=date(2026, 1, 1),
+                updated=date(2026, 1, 1),
+                confidence=Confidence.HIGH,
+            ),
+            body="# Flash Attention\n\nIO-aware exact attention.",
+        )
+        new_page = GeneratedPage(
+            title="Flash Attention",
+            page_type=PageType.CONCEPT,
+            tags=["attention", "optimization"],
+            confidence=Confidence.HIGH,
+            body="# Flash Attention\n\nIO-aware exact attention with FA2 improvements.",
+            brief="Updated brief about FA1 and FA2.",
+        )
+
+        mock_patch = PatchedPage(
+            edits=[
+                EditOp(
+                    old_string="IO-aware exact attention.",
+                    new_string="IO-aware exact attention with FA2 improvements.",
+                ),
+            ],
+            tags_to_add=["optimization"],
+            confidence=Confidence.HIGH,
+        )
+        mock_brief = BriefOutput(
+            brief="FA1 and FA2: IO-aware exact attention with tiling optimizations."
+        )
+
+        with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.side_effect = [mock_patch, mock_brief]
+            fm, body = await merge_page(existing_page, new_page, "papers/fa2.pdf")
+
+        assert "FA2" in body
+        assert (
+            fm.brief == "FA1 and FA2: IO-aware exact attention with tiling optimizations."
+        )
+        assert mock_llm.call_count == 2  # 1 patch + 1 brief regen
+
+    @pytest.mark.asyncio
+    async def test_merge_page_regen_brief_on_rewrite_fallback(self) -> None:
+        """Brief regenerated even when falling back to rewrite."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.models import EditOp, PatchedPage
+
+        existing_page = WikiPage(
+            path="bert.md",
+            frontmatter=WikiFrontmatter(
+                title="BERT",
+                page_type=PageType.ENTITY,
+                brief="Bidirectional encoder.",
+                sources=["papers/bert.pdf"],
+                tags=["nlp"],
+                created=date(2026, 1, 1),
+                updated=date(2026, 1, 1),
+            ),
+            body="# BERT\n\nBidirectional encoder.",
+        )
+        new_page = GeneratedPage(
+            title="BERT",
+            page_type=PageType.ENTITY,
+            tags=["nlp"],
+            confidence=Confidence.MEDIUM,
+            body="# BERT\n\nUpdated content.",
+            brief="Updated BERT description.",
+        )
+
+        bad_patch = PatchedPage(
+            edits=[EditOp(old_string="NOT IN BODY", new_string="x")],
+            tags_to_add=[],
+            confidence=Confidence.MEDIUM,
+        )
+        mock_merged = MergedPage(
+            body="# BERT\n\nBidirectional encoder. Updated content.",
+            tags=["nlp"],
+            confidence=Confidence.MEDIUM,
+        )
+        mock_brief = BriefOutput(brief="BERT: bidirectional encoder with updated details.")
+
+        with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.side_effect = [bad_patch, bad_patch, bad_patch, mock_merged, mock_brief]
+            fm, body = await merge_page(existing_page, new_page, "new.pdf")
+
+        assert fm.brief == "BERT: bidirectional encoder with updated details."
+        assert mock_llm.call_count == 5  # 3 patch + 1 rewrite + 1 brief regen
