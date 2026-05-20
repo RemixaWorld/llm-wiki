@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import src.config
 from src.config import Settings
 
@@ -154,3 +156,75 @@ def test_get_edit_prompt_default(tmp_path, monkeypatch):
     assert "edit" in prompt.lower() or "patch" in prompt.lower()
     src.config._schema_cache = None
     src.config._settings = None
+
+
+class TestIngestMode:
+    """Tests for get_ingest_mode config function."""
+
+    def test_get_ingest_mode_focused(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        import src.config
+
+        src.config._settings = None
+        src.config._schema_cache = None
+
+        schema = tmp_path / "schema.yaml"
+        schema.write_text("ingest_mode: focused\n")
+        monkeypatch.setenv("WIKI_SCHEMA_PATH", str(schema))
+
+        from src.config import get_ingest_mode
+
+        assert get_ingest_mode() == "focused"
+
+        src.config._settings = None
+        src.config._schema_cache = None
+
+    def test_get_ingest_mode_comprehensive(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        import src.config
+
+        src.config._settings = None
+        src.config._schema_cache = None
+
+        schema = tmp_path / "schema.yaml"
+        schema.write_text("ingest_mode: comprehensive\n")
+        monkeypatch.setenv("WIKI_SCHEMA_PATH", str(schema))
+
+        from src.config import get_ingest_mode
+
+        assert get_ingest_mode() == "comprehensive"
+
+        src.config._settings = None
+        src.config._schema_cache = None
+
+    def test_get_ingest_mode_defaults_to_focused(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        import src.config
+
+        src.config._settings = None
+        src.config._schema_cache = None
+
+        schema = tmp_path / "schema.yaml"
+        schema.write_text("wiki:\n  name: test\n")
+        monkeypatch.setenv("WIKI_SCHEMA_PATH", str(schema))
+
+        from src.config import get_ingest_mode
+
+        assert get_ingest_mode() == "focused"  # default
+
+        src.config._settings = None
+        src.config._schema_cache = None
+
+    def test_get_ingest_mode_invalid_value_defaults(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        import src.config
+
+        src.config._settings = None
+        src.config._schema_cache = None
+
+        schema = tmp_path / "schema.yaml"
+        schema.write_text("ingest_mode: invalid_value\n")
+        monkeypatch.setenv("WIKI_SCHEMA_PATH", str(schema))
+
+        from src.config import get_ingest_mode
+
+        assert get_ingest_mode() == "focused"  # fallback for invalid
+
+        src.config._settings = None
+        src.config._schema_cache = None

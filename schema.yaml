@@ -3,6 +3,8 @@
 # Controls how the LLM creates and maintains wiki pages.
 # =============================================================================
 
+ingest_mode: focused  # "focused" (1-3 key concepts) or "comprehensive" (extract all)
+
 wiki:
   name: "My Knowledge Base"
   description: "Personal wiki maintained by LLM"

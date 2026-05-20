@@ -138,3 +138,10 @@ def get_allowed_tags() -> list[str]:
     schema = load_schema()
     tags = schema.get("tags", {})
     return tags.get("allowed", [])
+
+
+def get_ingest_mode() -> str:
+    """Return ingest mode from schema.yaml: 'focused' or 'comprehensive'."""
+    schema = load_schema()
+    mode = schema.get("ingest_mode", "focused")
+    return mode if mode in ("focused", "comprehensive") else "focused"
