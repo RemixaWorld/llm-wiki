@@ -479,6 +479,56 @@ class TestBriefAnalysis:
         assert mock_llm.call_count == 1
 
 
+class TestBatchCollisionCheck:
+    @pytest.mark.asyncio
+    async def test_batch_decision_mixed(self) -> None:
+        """Multiple collision pairs decided in one call."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.merge import batch_collision_check
+        from src.models import BatchCollisionDecision, CollisionDecision, CollisionPair
+
+        pairs = [
+            CollisionPair(
+                new_title="Flash Attention v2",
+                existing_title="Flash Attention",
+                existing_brief="IO-aware attention.",
+                collision_type="exact",
+            ),
+            CollisionPair(
+                new_title="Tiling Strategy",
+                existing_title="GPU Tiling",
+                existing_brief="Tiling for GPU memory.",
+                collision_type="fuzzy",
+                new_brief="Tiling strategies for attention.",
+            ),
+        ]
+
+        expected = BatchCollisionDecision(
+            decisions=[
+                CollisionDecision(new_title="Flash Attention v2", action="MERGE", reason="same topic"),
+                CollisionDecision(new_title="Tiling Strategy", action="SKIP", reason="different focus"),
+            ]
+        )
+
+        with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = expected
+            result = await batch_collision_check(pairs)
+
+        assert len(result.decisions) == 2
+        assert result.decisions[0].action == "MERGE"
+        assert result.decisions[1].action == "SKIP"
+        assert mock_llm.call_count == 1  # single call
+
+    @pytest.mark.asyncio
+    async def test_empty_pairs_returns_empty(self) -> None:
+        """No pairs → no LLM call."""
+        from src.merge import batch_collision_check
+
+        result = await batch_collision_check([])
+        assert result.decisions == []
+
+
 class TestMergePageWithBrief:
     @pytest.mark.asyncio
     async def test_merge_page_regenerates_brief(self) -> None:
@@ -529,9 +579,7 @@ class TestMergePageWithBrief:
             fm, body = await merge_page(existing_page, new_page, "papers/fa2.pdf")
 
         assert "FA2" in body
-        assert (
-            fm.brief == "FA1 and FA2: IO-aware exact attention with tiling optimizations."
-        )
+        assert fm.brief == "FA1 and FA2: IO-aware exact attention with tiling optimizations."
         assert mock_llm.call_count == 2  # 1 patch + 1 brief regen
 
     @pytest.mark.asyncio

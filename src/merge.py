@@ -8,7 +8,9 @@ from datetime import date
 from src.config import get_allowed_tags, get_edit_prompt, get_merge_prompt
 from src.llm import complete_structured
 from src.models import (
+    BatchCollisionDecision,
     BriefOutput,
+    CollisionPair,
     Confidence,
     GeneratedPage,
     MergeDecision,
@@ -96,7 +98,7 @@ async def brief_merge_check(
                 f'Existing page "{existing_title}" covers: {existing_brief}\n\n'
                 f"New content generated about this topic:\n{new_body}\n\n"
                 "Does the new content add significant information not covered "
-                'by the existing page?\nAnswer MERGE or SKIP. When uncertain, choose MERGE.'
+                "by the existing page?\nAnswer MERGE or SKIP. When uncertain, choose MERGE."
             ),
         },
     ]
@@ -131,6 +133,40 @@ async def topic_match_check(
     )
 
 
+async def batch_collision_check(
+    pairs: list[CollisionPair],
+) -> BatchCollisionDecision:
+    """Decide MERGE/SKIP for all collision pairs in a single LLM call."""
+    if not pairs:
+        return BatchCollisionDecision(decisions=[])
+
+    pairs_text = "\n\n".join(
+        f'{i + 1}. New page "{p.new_title}"'
+        + (f" (brief: {p.new_brief})" if p.new_brief else "")
+        + f'\n   Existing page "{p.existing_title}" (brief: {p.existing_brief})'
+        + f"\n   Collision type: {p.collision_type}"
+        for i, p in enumerate(pairs)
+    )
+
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "For each collision pair below, decide whether to MERGE the new "
+                "content into the existing page or SKIP (keep them separate).\n\n"
+                "Consider: same topic? Complementary information? Would merging "
+                "lose distinct identity?\nWhen uncertain, choose MERGE.\n\n"
+                f"{pairs_text}"
+            ),
+        },
+    ]
+    return await complete_structured(
+        messages=messages,
+        response_model=BatchCollisionDecision,
+        temperature=0.1,
+    )
+
+
 async def regenerate_brief(title: str, merged_body: str) -> str:
     """Regenerate brief after merge. Returns the new brief string."""
     result = await complete_structured(
@@ -138,7 +174,7 @@ async def regenerate_brief(title: str, merged_body: str) -> str:
             {
                 "role": "user",
                 "content": (
-                    f'Write a brief summary (1-3 sentences) for this wiki page:\n\n'
+                    f"Write a brief summary (1-3 sentences) for this wiki page:\n\n"
                     f"Title: {title}\n\n{merged_body}"
                 ),
             },
