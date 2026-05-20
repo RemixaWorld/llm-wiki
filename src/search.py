@@ -87,3 +87,58 @@ class WikiIndex:
             page.body,
         ]
         return " ".join(parts)
+
+
+# ── Brief Index ───────────────────────────────────────────────────────────────
+
+
+class BriefIndex:
+    """BM25 index over page briefs for fuzzy title dedup."""
+
+    def __init__(self) -> None:
+        self._entries: list[tuple[str, str]] = []  # [(path, brief)]
+        self._bm25: BM25Okapi | None = None
+
+    def build(self, pages: list[WikiPage]) -> None:
+        """Build index from wiki pages that have non-empty briefs."""
+        self._entries = []
+        for page in pages:
+            if page.frontmatter.brief:
+                self._entries.append((page.path, page.frontmatter.brief))
+        self._rebuild()
+
+    def search(self, query: str, top_k: int = 3) -> list[tuple[str, float]]:
+        """Search briefs, return [(page_path, score), ...] sorted by score desc."""
+        if not self._bm25 or not self._entries:
+            return []
+
+        tokens = tokenize(query)
+        if not tokens:
+            return []
+
+        scores = self._bm25.get_scores(tokens)
+        scored = [(self._entries[i][0], scores[i]) for i in range(len(scores)) if scores[i] > 0]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:top_k]
+
+    def add(self, path: str, brief: str) -> None:
+        """Incrementally add a single entry. Rebuilds the full index."""
+        if not brief:
+            return
+        self._entries.append((path, brief))
+        self._rebuild()
+        logger.info("added to brief index path=%s total=%d", path, len(self._entries))
+
+    def _rebuild(self) -> None:
+        """Rebuild BM25 index from stored entries."""
+        if not self._entries:
+            self._bm25 = None
+            return
+        settings = get_settings()
+        tokenized = [tokenize(brief) for _, brief in self._entries]
+        self._bm25 = BM25Okapi(tokenized, k1=settings.bm25_k1, b=settings.bm25_b)
+        logger.info("built brief index entries=%d", len(self._entries))
+
+    @property
+    def page_count(self) -> int:
+        return len(self._entries)

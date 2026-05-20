@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 
 from src.models import Confidence, PageType, WikiFrontmatter, WikiPage
-from src.search import WikiIndex, tokenize
+from src.search import BriefIndex, WikiIndex, tokenize
 
 
 def _make_page(title: str, body: str, tags: list[str] | None = None) -> WikiPage:
@@ -128,3 +128,98 @@ class TestWikiIndex:
         pages2 = [_make_page("New A", "New A."), _make_page("New B", "New B.")]
         idx.build(pages2)
         assert idx.page_count == 2
+
+
+class TestBriefIndex:
+    def test_empty_index(self) -> None:
+        idx = BriefIndex()
+        results = idx.search("anything")
+        assert results == []
+
+    def test_build_and_search(self) -> None:
+        pages = [
+            _make_page(
+                "Flash Attention",
+                "Some body text.",
+                ["attention"],
+            ),
+            _make_page("Self-Attention", "Other body.", ["attention"]),
+            _make_page("BERT", "NLP model.", ["nlp"]),
+        ]
+        # Set briefs on pages
+        pages[0].frontmatter.brief = "IO-aware exact attention algorithm using tiling"
+        pages[1].frontmatter.brief = "Sequence-internal attention mechanism for tokens"
+        pages[2].frontmatter.brief = "Bidirectional encoder for NLP pre-training"
+
+        idx = BriefIndex()
+        idx.build(pages)
+        results = idx.search("attention tiling HBM SRAM")
+        assert len(results) > 0
+        assert results[0][0] == "flash-attention.md"
+
+    def test_search_returns_tuples(self) -> None:
+        # Need 3+ pages so BM25 IDF is non-zero (N=2 makes all IDF=0)
+        pages = [
+            _make_page("Testing", "Body."),
+            _make_page("CNN", "Body."),
+            _make_page("RNN", "Body."),
+        ]
+        pages[0].frontmatter.brief = "A concept about testing"
+        pages[1].frontmatter.brief = "Convolutional neural networks"
+        pages[2].frontmatter.brief = "Recurrent neural networks"
+        idx = BriefIndex()
+        idx.build(pages)
+        results = idx.search("testing")
+        assert len(results) == 1
+        path, score = results[0]
+        assert path == "testing.md"
+        assert score > 0
+
+    def test_add_incrementally(self) -> None:
+        # Start with 2 pages to have enough IDF base, then add a 3rd
+        pages = [
+            _make_page("A", "Body."),
+            _make_page("X", "Body."),
+        ]
+        pages[0].frontmatter.brief = "About attention"
+        pages[1].frontmatter.brief = "About convolutional networks"
+        idx = BriefIndex()
+        idx.build(pages)
+        assert idx.page_count == 2
+
+        idx.add("b.md", "About transformers and attention")
+        assert idx.page_count == 3
+
+        results = idx.search("transformers")
+        assert len(results) > 0
+        assert results[0][0] == "b.md"
+
+    def test_skips_pages_without_brief(self) -> None:
+        pages = [
+            _make_page("With Brief", "Body."),
+            _make_page("No Brief", "Body."),
+        ]
+        pages[0].frontmatter.brief = "Has a brief"
+        pages[1].frontmatter.brief = ""
+        idx = BriefIndex()
+        idx.build(pages)
+        assert idx.page_count == 1
+
+    def test_no_match_returns_empty(self) -> None:
+        pages = [_make_page("Test", "Body.")]
+        pages[0].frontmatter.brief = "About quantum physics"
+        idx = BriefIndex()
+        idx.build(pages)
+        results = idx.search("medieval cooking recipes")
+        assert results == []
+
+    def test_top_k_limit(self) -> None:
+        pages = []
+        for i in range(10):
+            p = _make_page(f"Page {i}", f"Body {i}.")
+            p.frontmatter.brief = f"About attention mechanism variant {i}"
+            pages.append(p)
+        idx = BriefIndex()
+        idx.build(pages)
+        results = idx.search("attention", top_k=3)
+        assert len(results) <= 3
