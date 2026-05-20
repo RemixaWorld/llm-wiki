@@ -19,18 +19,18 @@ class Settings(BaseSettings):
     sources_dir: Path = Path("sources")
     schema_path: Path = Path("schema.yaml")
 
-    # LLM providers (LiteLLM model strings)
+    # LLM providers (LiteLLM model strings, ordered by fallback priority)
     minimax_api_key: SecretStr = SecretStr("")
     minimax_model: str = "minimax/minimax-m2.7"
     minimax_api_base: str = "https://api.minimaxi.com/v1"
     deepseek_api_key: SecretStr = SecretStr("")
     deepseek_model: str = "deepseek/deepseek-v4-flash"
-    ollama_host: str = "http://127.0.0.1:11434"
-    ollama_model: str = "ollama/qwen2.5:3b"
     groq_api_key: SecretStr = SecretStr("")
     groq_model: str = "groq/meta-llama/llama-4-scout-17b-16e-instruct"
     gemini_api_key: SecretStr = SecretStr("")
     gemini_model: str = "gemini/gemini-2.5-flash"
+    ollama_host: str = "http://127.0.0.1:11434"
+    ollama_model: str = "ollama/qwen2.5:3b"
 
     # Generation
     ingest_temperature: float = 0.3

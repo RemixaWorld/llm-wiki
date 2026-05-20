@@ -1,4 +1,4 @@
-"""LiteLLM wrapper with instructor structured output and Groq→Gemini→Ollama fallback."""
+"""LiteLLM wrapper with instructor structured output and provider fallback chain."""
 
 from __future__ import annotations
 
