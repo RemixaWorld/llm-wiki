@@ -48,6 +48,16 @@ def _get_providers() -> list[tuple[str, str, dict[str, str]]]:
             )
         )
 
+    # DeepSeek V4 Flash
+    if settings.deepseek_api_key.get_secret_value():
+        providers.append(
+            (
+                settings.deepseek_model,
+                "deepseek",
+                {"api_key": settings.deepseek_api_key.get_secret_value()},
+            )
+        )
+
     # Groq
     if settings.groq_api_key.get_secret_value():
         providers.append(

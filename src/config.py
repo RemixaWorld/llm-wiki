@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     minimax_api_key: SecretStr = SecretStr("")
     minimax_model: str = "minimax/minimax-m2.7"
     minimax_api_base: str = "https://api.minimaxi.com/v1"
+    deepseek_api_key: SecretStr = SecretStr("")
+    deepseek_model: str = "deepseek/deepseek-v4-flash"
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "ollama/qwen2.5:3b"
     groq_api_key: SecretStr = SecretStr("")
