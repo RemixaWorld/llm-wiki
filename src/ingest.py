@@ -273,6 +273,20 @@ async def process_batches_node(state: IngestState) -> IngestState:
 
             all_pages = [result.source_summary, *result.concept_pages, *result.entity_pages]
 
+            # Intra-batch dedup: keep first occurrence per title
+            seen_titles: set[str] = set()
+            deduped: list[GeneratedPage] = []
+            for p in all_pages:
+                if p.title not in seen_titles:
+                    seen_titles.add(p.title)
+                    deduped.append(p)
+            if len(deduped) < len(all_pages):
+                logger.info(
+                    "intra-batch dedup removed=%d duplicates",
+                    len(all_pages) - len(deduped),
+                )
+            all_pages = deduped
+
             today = date.today()
             batch_titles: list[str] = []
             batch_briefs: dict[str, str] = {}
