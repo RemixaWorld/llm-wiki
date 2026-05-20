@@ -1008,9 +1008,130 @@ class TestBatchCollisionFlow:
                 }
             )
 
-        # Summary written, FA merged, BERT skipped (but still tracked)
+        # Summary written, FA merged, BERT exact SKIP → not written
         assert "errors" not in result or len(result.get("errors", [])) == 0
-        assert len(result["written_paths"]) == 3  # summary + merged FA + skipped BERT
+        assert len(result["written_paths"]) == 2  # summary + merged FA (BERT exact skip not written)
+
+        src.config._settings = None
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_skip_writes_new_page(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fuzzy collision SKIP → different topics, page written as new."""
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        # Pre-create existing pages (need 3+ for BM25 IDF)
+        from src.wiki import write_page
+
+        write_page(
+            WikiFrontmatter(
+                title="Flash Attention",
+                page_type=PageType.CONCEPT,
+                sources=["old.pdf"],
+                tags=["attention"],
+                created=date(2026, 1, 1),
+                updated=date(2026, 1, 1),
+                confidence=Confidence.HIGH,
+                brief="IO-aware exact attention algorithm using tiling for memory optimization.",
+            ),
+            "# Flash Attention\n\nBody.",
+            wiki_dir,
+        )
+        write_page(
+            WikiFrontmatter(
+                title="Reinforcement Learning",
+                page_type=PageType.CONCEPT,
+                sources=["old.pdf"],
+                tags=["rl"],
+                created=date(2026, 1, 1),
+                updated=date(2026, 1, 1),
+                confidence=Confidence.HIGH,
+                brief="Agent learns optimal policy through environment interaction and rewards.",
+            ),
+            "# Reinforcement Learning\n\nBody.",
+            wiki_dir,
+        )
+        write_page(
+            WikiFrontmatter(
+                title="Gradient Descent",
+                page_type=PageType.CONCEPT,
+                sources=["old.pdf"],
+                tags=["optimization"],
+                created=date(2026, 1, 1),
+                updated=date(2026, 1, 1),
+                confidence=Confidence.HIGH,
+                brief="Optimization algorithm for minimizing loss in neural networks.",
+            ),
+            "# Gradient Descent\n\nBody.",
+            wiki_dir,
+        )
+
+        # LLM generates a page with different title but similar brief (fuzzy match)
+        ingest_result = IngestResult(
+            source_summary=GeneratedPage(
+                title="Summary",
+                page_type=PageType.SOURCE_SUMMARY,
+                tags=[],
+                confidence=Confidence.HIGH,
+                body="Summary.",
+                brief="Source summary.",
+            ),
+            concept_pages=[
+                GeneratedPage(
+                    title="Memory-Efficient Attention",
+                    page_type=PageType.CONCEPT,
+                    tags=["attention"],
+                    confidence=Confidence.HIGH,
+                    body="# Memory-Efficient Attention\n\nDetails.",
+                    brief="Attention optimization using memory tiling techniques.",
+                ),
+            ],
+            entity_pages=[],
+        )
+
+        from src.models import BatchCollisionDecision, CollisionDecision
+
+        mock_batch_decision = BatchCollisionDecision(
+            decisions=[
+                CollisionDecision(
+                    new_title="Memory-Efficient Attention",
+                    action="SKIP",
+                    reason="different topic from Flash Attention",
+                ),
+            ]
+        )
+
+        with (
+            patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm,
+            patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
+        ):
+            mock_llm.return_value = ingest_result
+            mock_merge_llm.return_value = mock_batch_decision
+            result = await process_batches_node(
+                {
+                    "chunks": ["Text about memory-efficient attention."],
+                    "source_path": "test.txt",
+                    "source_title": "Test",
+                    "fresh": True,
+                }
+            )
+
+        # Summary + fuzzy-skipped "Memory-Efficient Attention" written as new page
+        assert "errors" not in result or len(result.get("errors", [])) == 0
+        assert len(result["written_paths"]) == 2
+        assert any("memory-efficient-attention" in p for p in result["written_paths"])
+
+        # Verify the page exists on disk
+        page = read_page("memory-efficient-attention.md", wiki_dir)
+        assert page.frontmatter.title == "Memory-Efficient Attention"
 
         src.config._settings = None
 

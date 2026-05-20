@@ -388,12 +388,15 @@ async def process_batches_node(state: IngestState) -> IngestState:
 
             # Phase 3: Batch collision decisions (1 LLM call)
             if collision_pairs:
+                pair_types = {p.new_title: p.collision_type for p in collision_pairs}
                 batch_decision = await batch_collision_check(collision_pairs)
                 for decision in batch_decision.decisions:
                     gen_page = collision_gen_pages.get(decision.new_title)
                     existing_page = collision_existing.get(decision.new_title)
                     if gen_page is None or existing_page is None:
                         continue
+
+                    collision_type = pair_types.get(decision.new_title, "exact")
 
                     if decision.action == "MERGE":
                         merged_fm, merged_body = await merge_page(
@@ -403,17 +406,23 @@ async def process_batches_node(state: IngestState) -> IngestState:
                         )
                         path = write_page(merged_fm, merged_body, settings.wiki_dir)
                         batch_brief_adds.append((path, merged_fm.brief))
+                        all_written.append(path)
+                        batch_titles.append(gen_page.title)
+                        batch_briefs[gen_page.title] = gen_page.brief
+                    elif collision_type == "fuzzy":
+                        # SKIP on fuzzy = different topics, write as new page
+                        path = _write_new_page(gen_page, source_path, today, settings)
+                        batch_brief_adds.append((path, gen_page.brief))
+                        all_written.append(path)
+                        batch_titles.append(gen_page.title)
+                        batch_briefs[gen_page.title] = gen_page.brief
                     else:
+                        # SKIP on exact = same title already exists, don't write
                         logger.info(
                             "batch skip title=%s reason=%s",
                             gen_page.title,
                             decision.reason,
                         )
-                        path = title_to_path(gen_page.title)
-
-                    all_written.append(path)
-                    batch_titles.append(gen_page.title)
-                    batch_briefs[gen_page.title] = gen_page.brief
 
             # Phase 4: Add to BriefIndex after batch
             for add_path, add_brief in batch_brief_adds:
