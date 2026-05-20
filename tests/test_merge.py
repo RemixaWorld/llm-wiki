@@ -8,10 +8,13 @@ import pytest
 
 from src.merge import _merge_frontmatter, merge_page
 from src.models import (
+    BriefOutput,
     Confidence,
     GeneratedPage,
+    MergeDecision,
     MergedPage,
     PageType,
+    TopicMatchDecision,
     WikiFrontmatter,
     WikiPage,
 )
@@ -364,3 +367,100 @@ class TestMergePagePatchSuccess:
 
         assert "Updated content" in body
         assert mock_llm.call_count == 4  # 3 patch + 1 rewrite
+
+
+class TestBriefAnalysis:
+    @pytest.mark.asyncio
+    async def test_scenario_a_merge(self) -> None:
+        """Scenario A: brief + body -> LLM says MERGE."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.merge import brief_merge_check
+
+        result = MergeDecision(action="MERGE", reason="New FA2 details.")
+        with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = result
+            decision = await brief_merge_check(
+                existing_brief="IO-aware exact attention via tiling.",
+                existing_title="Flash Attention",
+                new_body="Flash Attention 2 reduces non-matmul FLOPs further.",
+            )
+
+        assert decision.action == "MERGE"
+        assert mock_llm.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_scenario_a_skip(self) -> None:
+        """Scenario A: brief + body -> LLM says SKIP."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.merge import brief_merge_check
+
+        result = MergeDecision(action="SKIP", reason="Already covered.")
+        with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = result
+            decision = await brief_merge_check(
+                existing_brief="IO-aware exact attention via tiling.",
+                existing_title="Flash Attention",
+                new_body="Flash Attention uses tiling to reduce memory access.",
+            )
+
+        assert decision.action == "SKIP"
+        assert mock_llm.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_scenario_b_same_topic(self) -> None:
+        """Scenario B: brief vs brief -> LLM says same topic."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.merge import topic_match_check
+
+        result = TopicMatchDecision(same_topic=True, reason="Both about Flash Attention.")
+        with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = result
+            decision = await topic_match_check(
+                existing_title="Flash Attention",
+                existing_brief="IO-aware exact attention via tiling.",
+                new_title="Flash Attention Algorithm",
+                new_brief="Attention optimization using memory tiling.",
+            )
+
+        assert decision.same_topic is True
+        assert mock_llm.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_scenario_b_different_topic(self) -> None:
+        """Scenario B: brief vs brief -> LLM says different topics."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.merge import topic_match_check
+
+        result = TopicMatchDecision(same_topic=False, reason="Different topics.")
+        with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = result
+            decision = await topic_match_check(
+                existing_title="Flash Attention",
+                existing_brief="IO-aware exact attention via tiling.",
+                new_title="Attention Span",
+                new_brief="Psychological concept about focus duration.",
+            )
+
+        assert decision.same_topic is False
+
+    @pytest.mark.asyncio
+    async def test_regenerate_brief(self) -> None:
+        """Post-merge brief regeneration."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.merge import regenerate_brief
+
+        mock_output = BriefOutput(brief="Updated brief about FA1 and FA2.")
+        with patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = mock_output
+            brief = await regenerate_brief(
+                title="Flash Attention",
+                merged_body="Updated body about Flash Attention 2.",
+            )
+
+        assert brief == "Updated brief about FA1 and FA2."
+        assert mock_llm.call_count == 1

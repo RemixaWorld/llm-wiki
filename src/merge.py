@@ -8,10 +8,13 @@ from datetime import date
 from src.config import get_allowed_tags, get_edit_prompt, get_merge_prompt
 from src.llm import complete_structured
 from src.models import (
+    BriefOutput,
     Confidence,
     GeneratedPage,
+    MergeDecision,
     MergedPage,
     PatchedPage,
+    TopicMatchDecision,
     WikiFrontmatter,
     WikiPage,
 )
@@ -72,6 +75,76 @@ def _merge_frontmatter(
     )
 
     return fm, merged_body
+
+
+async def brief_merge_check(
+    existing_brief: str,
+    existing_title: str,
+    new_body: str,
+) -> MergeDecision:
+    """Scenario A: decide whether to merge new content into existing page.
+
+    Uses existing page's brief + new page's body to determine if the new
+    content adds significant information.
+    """
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                f'Existing page "{existing_title}" covers: {existing_brief}\n\n'
+                f"New content generated about this topic:\n{new_body}\n\n"
+                "Does the new content add significant information not covered "
+                'by the existing page?\nAnswer MERGE or SKIP. When uncertain, choose MERGE.'
+            ),
+        },
+    ]
+    return await complete_structured(
+        messages=messages,
+        response_model=MergeDecision,
+        temperature=0.1,
+    )
+
+
+async def topic_match_check(
+    existing_title: str,
+    existing_brief: str,
+    new_title: str,
+    new_brief: str,
+) -> TopicMatchDecision:
+    """Scenario B: check if two briefs describe the same topic."""
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                f'Existing page "{existing_title}" covers: {existing_brief}\n'
+                f'New page "{new_title}" covers: {new_brief}\n\n'
+                "Are these about the same topic?\nAnswer SAME or DIFFERENT."
+            ),
+        },
+    ]
+    return await complete_structured(
+        messages=messages,
+        response_model=TopicMatchDecision,
+        temperature=0.1,
+    )
+
+
+async def regenerate_brief(title: str, merged_body: str) -> str:
+    """Regenerate brief after merge. Returns the new brief string."""
+    result = await complete_structured(
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    f'Write a brief summary (1-3 sentences) for this wiki page:\n\n'
+                    f"Title: {title}\n\n{merged_body}"
+                ),
+            },
+        ],
+        response_model=BriefOutput,
+        temperature=0.1,
+    )
+    return result.brief
 
 
 def _build_patch_messages(
