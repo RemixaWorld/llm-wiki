@@ -82,6 +82,42 @@ class TestGetProviders:
 
         src.config._settings = None
 
+    def test_llm_provider_selects_deepseek_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When llm_provider=deepseek, only deepseek + ollama are returned."""
+        monkeypatch.setenv("WIKI_LLM_PROVIDER", "deepseek")
+        monkeypatch.setenv("WIKI_MINIMAX_API_KEY", "mm-key")
+        monkeypatch.setenv("WIKI_DEEPSEEK_API_KEY", "ds-key")
+        monkeypatch.setenv("WIKI_GROQ_API_KEY", "groq-key")
+        monkeypatch.setenv("WIKI_GEMINI_API_KEY", "gemini-key")
+
+        import src.config
+
+        src.config._settings = None
+
+        providers = _get_providers()
+        names = [p[1] for p in providers]
+        assert names == ["deepseek", "ollama"]
+
+        src.config._settings = None
+
+    def test_llm_provider_selects_minimax_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When llm_provider=minimax, only minimax + ollama are returned."""
+        monkeypatch.setenv("WIKI_LLM_PROVIDER", "minimax")
+        monkeypatch.setenv("WIKI_MINIMAX_API_KEY", "mm-key")
+        monkeypatch.setenv("WIKI_DEEPSEEK_API_KEY", "ds-key")
+        monkeypatch.setenv("WIKI_GROQ_API_KEY", "groq-key")
+        monkeypatch.setenv("WIKI_GEMINI_API_KEY", "gemini-key")
+
+        import src.config
+
+        src.config._settings = None
+
+        providers = _get_providers()
+        names = [p[1] for p in providers]
+        assert names == ["minimax", "ollama"]
+
+        src.config._settings = None
+
 
 class TestCompleteStructured:
     @pytest.mark.asyncio

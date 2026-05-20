@@ -19,7 +19,11 @@ class Settings(BaseSettings):
     sources_dir: Path = Path("sources")
     schema_path: Path = Path("schema.yaml")
 
-    # LLM providers (LiteLLM model strings, ordered by fallback priority)
+    # LLM providers (LiteLLM model strings)
+    # Set llm_provider to pick a primary cloud provider: "deepseek" or "minimax".
+    # When set, only that cloud provider + ollama fallback are used.
+    # When empty, all providers with API keys are tried in order.
+    llm_provider: str = ""
     minimax_api_key: SecretStr = SecretStr("")
     minimax_model: str = "minimax/minimax-m2.7"
     minimax_api_base: str = "https://api.minimaxi.com/v1"

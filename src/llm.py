@@ -31,12 +31,18 @@ def get_llm_semaphore() -> asyncio.Semaphore:
 
 
 def _get_providers() -> list[tuple[str, str, dict[str, str]]]:
-    """Build ordered list of (model, name, extra_kwargs) from settings."""
+    """Build ordered list of (model, name, extra_kwargs) from settings.
+
+    When llm_provider is set (e.g. "deepseek" or "minimax"), only that
+    cloud provider + ollama are returned. Otherwise all configured providers
+    are included in priority order.
+    """
     settings = get_settings()
     providers: list[tuple[str, str, dict[str, str]]] = []
+    chosen = settings.llm_provider.lower().strip() if settings.llm_provider else ""
 
-    # MiniMax (highest priority)
-    if settings.minimax_api_key.get_secret_value():
+    # MiniMax
+    if settings.minimax_api_key.get_secret_value() and chosen in ("", "minimax"):
         providers.append(
             (
                 settings.minimax_model,
@@ -49,7 +55,7 @@ def _get_providers() -> list[tuple[str, str, dict[str, str]]]:
         )
 
     # DeepSeek V4 Flash
-    if settings.deepseek_api_key.get_secret_value():
+    if settings.deepseek_api_key.get_secret_value() and chosen in ("", "deepseek"):
         providers.append(
             (
                 settings.deepseek_model,
@@ -59,7 +65,7 @@ def _get_providers() -> list[tuple[str, str, dict[str, str]]]:
         )
 
     # Groq
-    if settings.groq_api_key.get_secret_value():
+    if settings.groq_api_key.get_secret_value() and chosen in ("", "groq"):
         providers.append(
             (
                 settings.groq_model,
@@ -69,7 +75,7 @@ def _get_providers() -> list[tuple[str, str, dict[str, str]]]:
         )
 
     # Gemini
-    if settings.gemini_api_key.get_secret_value():
+    if settings.gemini_api_key.get_secret_value() and chosen in ("", "gemini"):
         providers.append(
             (
                 settings.gemini_model,
@@ -97,7 +103,8 @@ async def complete_structured(  # noqa: UP047
 ) -> T:
     """Call LLM with fallback chain and return structured Pydantic output.
 
-    Tries providers in order: MiniMax → DeepSeek → Groq → Gemini → Ollama.
+    When llm_provider is set, only that cloud provider + ollama are tried.
+    Otherwise all configured providers are tried in priority order.
     Uses instructor for structured output extraction.
     """
     providers = _get_providers()
