@@ -7,13 +7,16 @@ from datetime import date
 import pytest
 
 from src.models import (
+    Checkpoint,
     Confidence,
     ExtractedSource,
     GeneratedPage,
     IngestResult,
     LintIssue,
+    MergeDecision,
     PageType,
     QueryAnswer,
+    TopicMatchDecision,
     WikiFrontmatter,
 )
 
@@ -176,3 +179,55 @@ class TestPatchedPage:
         page = PatchedPage(edits=[])
         assert page.tags_to_add == []
         assert page.confidence == Confidence.MEDIUM
+
+
+class TestBriefField:
+    def test_wiki_frontmatter_has_brief(self) -> None:
+        fm = WikiFrontmatter(
+            title="Test",
+            page_type=PageType.CONCEPT,
+            brief="A short summary of the page content.",
+        )
+        assert fm.brief == "A short summary of the page content."
+
+    def test_wiki_frontmatter_brief_defaults_empty(self) -> None:
+        fm = WikiFrontmatter(title="Test", page_type=PageType.CONCEPT)
+        assert fm.brief == ""
+
+    def test_generated_page_has_brief(self) -> None:
+        page = GeneratedPage(
+            title="Test",
+            page_type=PageType.CONCEPT,
+            tags=["test"],
+            confidence=Confidence.HIGH,
+            body="Content.",
+            brief="Short description.",
+        )
+        assert page.brief == "Short description."
+
+    def test_checkpoint_has_generated_briefs(self) -> None:
+        cp = Checkpoint(
+            source="test.pdf",
+            source_title="Test",
+            total_chunks=5,
+            created_at="2026-05-20T00:00:00+00:00",
+            generated_briefs={"Flash Attention": "IO-aware exact attention via tiling."},
+        )
+        assert cp.generated_briefs["Flash Attention"] == "IO-aware exact attention via tiling."
+
+    def test_checkpoint_generated_briefs_defaults_empty(self) -> None:
+        cp = Checkpoint(
+            source="test.pdf",
+            source_title="Test",
+            total_chunks=5,
+            created_at="2026-05-20T00:00:00+00:00",
+        )
+        assert cp.generated_briefs == {}
+
+    def test_merge_decision_model(self) -> None:
+        d = MergeDecision(action="MERGE", reason="New info about FA2.")
+        assert d.action == "MERGE"
+
+    def test_topic_match_decision_model(self) -> None:
+        d = TopicMatchDecision(same_topic=True, reason="Both about Flash Attention.")
+        assert d.same_topic is True

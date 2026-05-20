@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,6 +38,7 @@ class WikiFrontmatter(BaseModel):
     updated: date = Field(default_factory=date.today)
     confidence: Confidence = Confidence.MEDIUM
     related: list[str] = Field(default_factory=list, description="[[WikiLink]] targets")
+    brief: str = Field(default="", description="Short summary of what this page covers")
 
     model_config = {"populate_by_name": True}
 
@@ -67,6 +69,7 @@ class GeneratedPage(BaseModel):
         default_factory=list,
         description="Titles of other wiki pages this should link to",
     )
+    brief: str = Field(default="", description="Short summary of what this page covers")
 
 
 class MergedPage(BaseModel):
@@ -93,6 +96,26 @@ class PatchedPage(BaseModel):
     edits: list[EditOp] = Field(description="Edit operations to apply in order")
     tags_to_add: list[str] = Field(default_factory=list, description="Tags to add (incremental)")
     confidence: Confidence = Confidence.MEDIUM
+
+
+class MergeDecision(BaseModel):
+    """Scenario A: should we merge new content into existing page?"""
+
+    action: Literal["MERGE", "SKIP"]
+    reason: str
+
+
+class TopicMatchDecision(BaseModel):
+    """Scenario B: do two briefs describe the same topic?"""
+
+    same_topic: bool
+    reason: str
+
+
+class BriefOutput(BaseModel):
+    """Lightweight model for brief regeneration only."""
+
+    brief: str
 
 
 class IngestResult(BaseModel):
@@ -156,6 +179,7 @@ class Checkpoint(BaseModel):
     completed_batches: list[int] = Field(default_factory=list)
     generated_titles: list[str] = Field(default_factory=list)
     created_at: str  # ISO datetime for staleness check
+    generated_briefs: dict[str, str] = Field(default_factory=dict)
 
 
 # ── Extraction models ───────────────────────────────────────────────────────
