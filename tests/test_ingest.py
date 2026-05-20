@@ -431,6 +431,21 @@ class TestBuildBatchMessagesV2:
         user_msg = messages[1]["content"]
         assert "only generate the source_summary" in user_msg.lower() or "only" in user_msg.lower()
 
+    def test_short_text_excludes_focused_mode(self) -> None:
+        """Short text mode and focused mode are mutually exclusive."""
+        from src.ingest import _build_batch_messages
+
+        messages = _build_batch_messages(
+            chunks=["Very short text."],
+            batch_start=0,
+            batch_size=5,
+            source_title="Test",
+            existing_briefs={},
+            is_short=True,
+        )
+        user_msg = messages[1]["content"]
+        assert "1-3 concept_pages" not in user_msg
+
     def test_normal_text_no_short_instruction(self) -> None:
         from src.ingest import _build_batch_messages
 

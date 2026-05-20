@@ -127,28 +127,27 @@ def _build_batch_messages(
     if allowed_tags:
         user_parts.append("Preferred tags (use when applicable): " + ", ".join(allowed_tags))
 
-    # 2. Ingest mode instructions
-    ingest_mode = get_ingest_mode()
-    if ingest_mode == "focused":
-        user_parts.append(
-            "IMPORTANT: Generate only 1-3 concept_pages and 1-3 entity_pages. "
-            "Focus on the most important concepts and entities:\n"
-            "- Core topic/thesis of the source (not tangential mentions)\n"
-            "- Entities/concepts with standalone knowledge value "
-            "(worth their own page, not just an example)\n"
-            "- Knowledge not already covered by previously generated pages listed below. "
-            "Quality over quantity."
-        )
-
-    # 3. Short text instruction
+    # 2. Ingest mode or short text (mutually exclusive)
     if is_short:
         user_parts.append(
             "This is a short source text. Only generate the source_summary. "
             "Mention concepts and entities using [[WikiLink]] syntax within the body "
             "--- do not create separate concept_pages or entity_pages."
         )
+    else:
+        ingest_mode = get_ingest_mode()
+        if ingest_mode == "focused":
+            user_parts.append(
+                "IMPORTANT: Generate only 1-3 concept_pages and 1-3 entity_pages. "
+                "Focus on the most important concepts and entities:\n"
+                "- Core topic/thesis of the source (not tangential mentions)\n"
+                "- Entities/concepts with standalone knowledge value "
+                "(worth their own page, not just an example)\n"
+                "- Knowledge not already covered by previously generated pages listed below. "
+                "Quality over quantity."
+            )
 
-    # 4. Previously generated pages from this source (titles + briefs)
+    # 3. Previously generated pages from this source (titles + briefs)
     if existing_briefs:
         pages_list = "\n".join(
             f'  - "{title}": {brief}' for title, brief in existing_briefs.items()
@@ -299,7 +298,7 @@ async def process_batches_node(state: IngestState) -> IngestState:
             is_short=count_tokens(
                 "\n\n---\n\n".join(chunks[batch_idx * batch_size : (batch_idx + 1) * batch_size])
             )
-            < 1000,
+            < 500,
         )
 
         try:
