@@ -59,6 +59,9 @@ prompts:
     Use the provided tag vocabulary when possible. Create new tags only
     when no existing tag fits.
 
+    For each page, write a brief (1-3 sentences) summarizing what the page
+    covers. This brief will be used for cross-referencing and deduplication.
+
   query_system: |
     You are a research assistant. Answer questions using ONLY the wiki
     pages provided as context. Cite pages by their exact title.
@@ -73,6 +76,9 @@ prompts:
     Preserve ALL unique information from both versions. Remove redundancy.
     Maintain a coherent structure. Keep all [[WikiLinks]] from both versions.
     Use the provided tag vocabulary when possible.
+
+    After merging, the brief will be regenerated separately — do not
+    include brief generation in your output.
 
   edit_system: |
     You are a knowledge engineer updating wiki pages with minimal edits.
