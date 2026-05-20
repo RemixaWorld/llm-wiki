@@ -12,6 +12,7 @@ from src.wiki import (
     delete_page,
     extract_wikilinks,
     get_page_by_title,
+    get_page_lock,
     list_pages,
     parse_frontmatter,
     read_all_pages,
@@ -306,3 +307,38 @@ class TestReadAllPages:
         # bad.md has no frontmatter — python-frontmatter returns empty metadata
         # parse_frontmatter will use defaults, so it should still parse
         assert len(pages) >= 2
+
+
+class TestPageLock:
+    @pytest.mark.asyncio
+    async def test_same_path_returns_same_lock(self) -> None:
+        lock1 = get_page_lock("bert.md")
+        lock2 = get_page_lock("bert.md")
+        assert lock1 is lock2
+
+    @pytest.mark.asyncio
+    async def test_different_paths_return_different_locks(self) -> None:
+        lock1 = get_page_lock("bert.md")
+        lock2 = get_page_lock("gpt.md")
+        assert lock1 is not lock2
+
+    @pytest.mark.asyncio
+    async def test_lock_serializes_access(self) -> None:
+        import asyncio
+
+        lock = get_page_lock("test-serialize.md")
+        order: list[str] = []
+
+        async def task(name: str):
+            async with lock:
+                order.append(f"{name}-start")
+                await asyncio.sleep(0.05)
+                order.append(f"{name}-end")
+
+        await asyncio.gather(task("a"), task("b"))
+        # a must finish before b starts (or vice versa)
+        a_start = order.index("a-start")
+        a_end = order.index("a-end")
+        b_start = order.index("b-start")
+        b_end = order.index("b-end")
+        assert a_end < b_start or b_end < a_start

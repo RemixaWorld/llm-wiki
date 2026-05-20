@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -21,6 +22,17 @@ _MULTI_DASH_RE = re.compile(r"-{2,}")
 # ── Wikilink regex ───────────────────────────────────────────────────────────
 
 WIKILINK_RE = re.compile(r"\[\[(.+?)\]\]")
+
+# ── Per-page write locks ─────────────────────────────────────────────────────
+
+_page_locks: dict[str, asyncio.Lock] = {}
+
+
+def get_page_lock(page_path: str) -> asyncio.Lock:
+    """Return an asyncio.Lock for a specific wiki page path."""
+    if page_path not in _page_locks:
+        _page_locks[page_path] = asyncio.Lock()
+    return _page_locks[page_path]
 
 
 def slugify(title: str) -> str:
