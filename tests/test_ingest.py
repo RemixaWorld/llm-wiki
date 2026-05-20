@@ -329,6 +329,7 @@ class TestProcessBatchesMerge:
             created=date(2026, 1, 1),
             updated=date(2026, 1, 1),
             confidence=Confidence.HIGH,
+            brief="Bidirectional encoder model for NLP.",
         )
         write_page(existing_fm, "# BERT\n\nOld content about BERT.", wiki_dir)
 
@@ -433,6 +434,7 @@ class TestCrossSourceMerge:
             updated=date(2026, 4, 1),
             confidence=Confidence.HIGH,
             related=["transformer-architecture.md"],
+            brief="Bidirectional encoder model for NLP tasks.",
         )
         write_page(existing_fm, "# BERT\n\nBidirectional encoder from source A.", wiki_dir)
 
@@ -504,6 +506,305 @@ class TestCrossSourceMerge:
 
         # Source B Summary should be written normally (no merge)
         assert "source-b-summary.md" in result.get("written_paths", [])
+
+        src.config._settings = None
+
+
+class TestEmptyTitleFilter:
+    """1a: After intra-batch dedup, filter out pages with empty titles."""
+
+    @pytest.mark.asyncio
+    async def test_empty_title_pages_are_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        # LLM returns a page with an empty title
+        ingest_result = IngestResult(
+            source_summary=GeneratedPage(
+                title="Valid Page",
+                page_type=PageType.SOURCE_SUMMARY,
+                tags=["test"],
+                confidence=Confidence.HIGH,
+                body="# Valid Page\n\nContent.",
+                related_titles=[],
+            ),
+            concept_pages=[
+                GeneratedPage(
+                    title="",
+                    page_type=PageType.CONCEPT,
+                    tags=["test"],
+                    confidence=Confidence.HIGH,
+                    body="# Empty Title\n\nShould be filtered.",
+                    related_titles=[],
+                ),
+            ],
+            entity_pages=[],
+        )
+
+        state = {
+            "chunks": ["Some text"],
+            "source_path": "test.txt",
+            "source_title": "Test",
+            "fresh": True,
+        }
+
+        with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = ingest_result
+            result = await process_batches_node(state)
+
+        # Only the valid page should be written, empty title filtered
+        assert "errors" not in result or len(result.get("errors", [])) == 0
+        written = result.get("written_paths", [])
+        assert len(written) == 1
+        assert "valid-page.md" in written[0]
+
+        src.config._settings = None
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_title_pages_are_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        ingest_result = IngestResult(
+            source_summary=GeneratedPage(
+                title="  ",
+                page_type=PageType.SOURCE_SUMMARY,
+                tags=["test"],
+                confidence=Confidence.HIGH,
+                body="# Whitespace Title\n\nShould be filtered.",
+                related_titles=[],
+            ),
+            concept_pages=[],
+            entity_pages=[],
+        )
+
+        state = {
+            "chunks": ["Some text"],
+            "source_path": "test.txt",
+            "source_title": "Test",
+            "fresh": True,
+        }
+
+        with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = ingest_result
+            result = await process_batches_node(state)
+
+        written = result.get("written_paths", [])
+        assert len(written) == 0
+
+        src.config._settings = None
+
+
+class TestBatchBriefAdds:
+    """1b: BriefIndex.add calls should be deferred until after the per-page loop."""
+
+    @pytest.mark.asyncio
+    async def test_brief_adds_happen_after_all_page_writes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify that brief_idx.add() is called AFTER all pages in the batch are written.
+
+        We track the order of write_page and add() calls. With batching,
+        all writes should happen before any add() calls.
+        """
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        ingest_result = IngestResult(
+            source_summary=GeneratedPage(
+                title="Page One",
+                page_type=PageType.SOURCE_SUMMARY,
+                tags=["test"],
+                confidence=Confidence.HIGH,
+                body="# Page One\n\nContent one.",
+                related_titles=[],
+                brief="Summary of page one about testing.",
+            ),
+            concept_pages=[
+                GeneratedPage(
+                    title="Page Two",
+                    page_type=PageType.CONCEPT,
+                    tags=["test"],
+                    confidence=Confidence.HIGH,
+                    body="# Page Two\n\nContent two.",
+                    related_titles=[],
+                    brief="Summary of page two about testing.",
+                ),
+            ],
+            entity_pages=[],
+        )
+
+        state = {
+            "chunks": ["Some text"],
+            "source_path": "test.txt",
+            "source_title": "Test",
+            "fresh": True,
+        }
+
+        call_log: list[str] = []
+
+        with (
+            patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm,
+            patch("src.ingest.write_page") as mock_write,
+            patch("src.ingest.BriefIndex") as mock_brief_idx_cls,
+        ):
+            from src.search import BriefIndex as RealBriefIndex
+
+            mock_llm.return_value = ingest_result
+
+            # Track write_page calls
+            original_write = write_page
+
+            def tracked_write(fm, body, wiki_dir_arg):
+                call_log.append(f"write:{fm.title}")
+                return original_write(fm, body, wiki_dir_arg)
+
+            mock_write.side_effect = tracked_write
+
+            # Track BriefIndex.add calls
+            real_idx = RealBriefIndex()
+            original_add = real_idx.add
+
+            def tracked_add(path: str, brief: str) -> None:
+                call_log.append(f"add:{path}")
+                original_add(path, brief)
+
+            real_idx.add = tracked_add  # type: ignore[method-assign]
+            mock_brief_idx_cls.return_value = real_idx
+
+            result = await process_batches_node(state)
+
+        written = result.get("written_paths", [])
+        assert len(written) == 2
+
+        # With batched adds, all writes should come before all adds
+        write_indices = [i for i, c in enumerate(call_log) if c.startswith("write:")]
+        add_indices = [i for i, c in enumerate(call_log) if c.startswith("add:")]
+
+        # Every write index should be less than every add index
+        if write_indices and add_indices:
+            assert max(write_indices) < min(add_indices), (
+                f"Writes must all come before adds. Call order: {call_log}"
+            )
+
+        src.config._settings = None
+
+
+class TestEmptyBriefShortcut:
+    """1c: Skip brief_merge_check when existing page has empty brief."""
+
+    @pytest.mark.asyncio
+    async def test_skips_brief_check_when_existing_has_no_brief(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When exact collision and existing page has empty brief, go straight to merge."""
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        # Pre-create existing page with EMPTY brief
+        existing_fm = WikiFrontmatter(
+            title="BERT",
+            page_type=PageType.ENTITY,
+            sources=["old/source.pdf"],
+            tags=["nlp"],
+            created=date(2026, 1, 1),
+            updated=date(2026, 1, 1),
+            confidence=Confidence.HIGH,
+            brief="",  # Empty brief
+        )
+        write_page(existing_fm, "# BERT\n\nOld content about BERT.", wiki_dir)
+
+        ingest_result = IngestResult(
+            source_summary=GeneratedPage(
+                title="Source Summary",
+                page_type=PageType.SOURCE_SUMMARY,
+                tags=["nlp"],
+                confidence=Confidence.HIGH,
+                body="# Source\n\nOverview.",
+                related_titles=[],
+            ),
+            concept_pages=[],
+            entity_pages=[
+                GeneratedPage(
+                    title="BERT",  # Exact collision
+                    page_type=PageType.ENTITY,
+                    tags=["nlp", "pre-training"],
+                    confidence=Confidence.HIGH,
+                    body="# BERT\n\nNew details.",
+                    related_titles=[],
+                ),
+            ],
+        )
+
+        from src.models import EditOp, PatchedPage
+
+        mock_patched = PatchedPage(
+            edits=[
+                EditOp(
+                    old_string="# BERT\n\nOld content about BERT.",
+                    new_string="# BERT\n\nOld content about BERT. New details.",
+                ),
+            ],
+            tags_to_add=["pre-training"],
+            confidence=Confidence.HIGH,
+        )
+
+        state = {
+            "chunks": ["Content about BERT pre-training."],
+            "source_path": "new-source.txt",
+            "source_title": "New Source",
+            "fresh": True,
+        }
+
+        with (
+            patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm,
+            patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
+        ):
+            mock_llm.return_value = ingest_result
+
+            # Should NOT call brief_merge_check at all (no MergeDecision call)
+            # Only merge_page calls: PatchedPage + BriefOutput
+            mock_merge_llm.side_effect = [
+                mock_patched,
+                BriefOutput(brief="BERT: merged brief."),
+            ]
+            result = await process_batches_node(state)
+
+        # Should have merged without calling brief_merge_check
+        assert "errors" not in result or len(result.get("errors", [])) == 0
+        bert_page = read_page("bert.md", wiki_dir)
+        assert bert_page.frontmatter.created == date(2026, 1, 1)
+
+        # Verify brief_merge_check was NOT called (only 2 merge LLM calls: patch + brief)
+        assert mock_merge_llm.call_count == 2
 
         src.config._settings = None
 

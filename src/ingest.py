@@ -285,38 +285,46 @@ async def process_batches_node(state: IngestState) -> IngestState:
                     "intra-batch dedup removed=%d duplicates",
                     len(all_pages) - len(deduped),
                 )
-            all_pages = deduped
+            # 1a: filter empty titles after intra-batch dedup
+            all_pages = [p for p in deduped if p.title.strip()]
 
             today = date.today()
             batch_titles: list[str] = []
             batch_briefs: dict[str, str] = {}
+            # 1b: collect brief_idx.add() calls and batch them after the loop
+            batch_brief_adds: list[tuple[str, str]] = []
             for gen_page in all_pages:
                 # Step 1: exact collision check
                 existing_page = get_page_by_title(gen_page.title, settings.wiki_dir)
 
                 if existing_page is not None:
-                    # Scenario A: brief analysis with full context
-                    decision = await brief_merge_check(
-                        existing_brief=existing_page.frontmatter.brief,
-                        existing_title=existing_page.frontmatter.title,
-                        new_body=gen_page.body,
+                    # 1c: skip brief_merge_check when existing page has empty brief
+                    if existing_page.frontmatter.brief:
+                        decision = await brief_merge_check(
+                            existing_brief=existing_page.frontmatter.brief,
+                            existing_title=existing_page.frontmatter.title,
+                            new_body=gen_page.body,
+                        )
+                        if decision.action == "SKIP":
+                            logger.info(
+                                "brief skip title=%s reason=%s",
+                                gen_page.title,
+                                decision.reason,
+                            )
+                            path = title_to_path(gen_page.title)
+                            all_written.append(path)
+                            batch_titles.append(gen_page.title)
+                            batch_briefs[gen_page.title] = gen_page.brief
+                            continue
+
+                    # No brief or MERGE → proceed to merge_page
+                    merged_fm, merged_body = await merge_page(
+                        existing_page,
+                        gen_page,
+                        source_path,
                     )
-                    if decision.action == "MERGE":
-                        merged_fm, merged_body = await merge_page(
-                            existing_page,
-                            gen_page,
-                            source_path,
-                        )
-                        path = write_page(merged_fm, merged_body, settings.wiki_dir)
-                        brief_idx.add(path, merged_fm.brief)
-                    else:
-                        # SKIP: don't write, record for checkpoint
-                        logger.info(
-                            "brief skip title=%s reason=%s",
-                            gen_page.title,
-                            decision.reason,
-                        )
-                        path = title_to_path(gen_page.title)
+                    path = write_page(merged_fm, merged_body, settings.wiki_dir)
+                    batch_brief_adds.append((path, merged_fm.brief))
                 else:
                     # Step 2: fuzzy collision check via BM25 brief search
                     fuzzy_match = _check_fuzzy_collision(
@@ -348,7 +356,7 @@ async def process_batches_node(state: IngestState) -> IngestState:
                                     source_path,
                                 )
                                 path = write_page(merged_fm, merged_body, settings.wiki_dir)
-                                brief_idx.add(path, merged_fm.brief)
+                                batch_brief_adds.append((path, merged_fm.brief))
                             else:
                                 logger.info(
                                     "brief skip (fuzzy) title=%s reason=%s",
@@ -364,7 +372,7 @@ async def process_batches_node(state: IngestState) -> IngestState:
                                 today,
                                 settings,
                             )
-                            brief_idx.add(path, gen_page.brief)
+                            batch_brief_adds.append((path, gen_page.brief))
                     else:
                         # No collision at all → new page
                         path = _write_new_page(
@@ -373,11 +381,15 @@ async def process_batches_node(state: IngestState) -> IngestState:
                             today,
                             settings,
                         )
-                        brief_idx.add(path, gen_page.brief)
+                        batch_brief_adds.append((path, gen_page.brief))
 
                 all_written.append(path)
                 batch_titles.append(gen_page.title)
                 batch_briefs[gen_page.title] = gen_page.brief
+
+            # 1b: batch-add all briefs to the index after processing all pages
+            for add_path, add_brief in batch_brief_adds:
+                brief_idx.add(add_path, add_brief)
 
             # Update checkpoint
             cp.completed_batches.append(batch_idx)
