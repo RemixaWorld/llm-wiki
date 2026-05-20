@@ -10,18 +10,22 @@ from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from src.config import get_settings
+from src.config import Settings, get_settings
 from src.extract import chunk_text, extract_source
 from src.llm import complete_structured
-from src.merge import merge_page
+from src.merge import brief_merge_check, merge_page, topic_match_check
 from src.models import (
     Checkpoint,
+    GeneratedPage,
     IngestResult,
     WikiFrontmatter,
+    WikiPage,
 )
+from src.search import BriefIndex
 from src.wiki import (
     extract_wikilinks,
     get_page_by_title,
+    read_all_pages,
     read_page,
     title_to_path,
     write_page,
@@ -98,11 +102,10 @@ def _build_batch_messages(
     batch_size: int,
     source_title: str,
     existing_titles: list[str],
-    wiki_titles: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Build LLM messages for a single batch of chunks.
 
-    Includes existing page titles so the LLM can create cross-batch wikilinks.
+    Includes intra-source page titles so the LLM uses consistent titles.
     """
     from src.config import get_allowed_tags, get_ingest_prompt
 
@@ -119,10 +122,9 @@ def _build_batch_messages(
     user_content = (
         f"Source: {source_title}\n\nCreate wiki pages from this source text:\n\n{combined}"
     )
-    all_existing = list(dict.fromkeys((existing_titles or []) + (wiki_titles or [])))
-    if all_existing:
+    if existing_titles:
         user_content += (
-            f"\n\nThe following wiki pages already exist: {', '.join(all_existing)}"
+            f"\n\nThe following wiki pages already exist: {', '.join(existing_titles)}"
             "\nLink to them using [[Title]] syntax where relevant."
             "\nIf you have genuinely NEW information about an existing topic, you may"
             " create a page with that title — it will be merged with existing content."
@@ -133,6 +135,50 @@ def _build_batch_messages(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
+
+
+def _write_new_page(
+    gen_page: GeneratedPage,
+    source_path: str,
+    today: date,
+    settings: Settings,
+) -> str:
+    """Write a new page to disk and return its path."""
+    fm = WikiFrontmatter(
+        title=gen_page.title,
+        page_type=gen_page.page_type,
+        sources=[source_path],
+        tags=gen_page.tags,
+        created=today,
+        updated=today,
+        confidence=gen_page.confidence,
+        related=[title_to_path(t) for t in gen_page.related_titles],
+        brief=gen_page.brief,
+    )
+    return write_page(fm, gen_page.body, settings.wiki_dir)
+
+
+def _check_fuzzy_collision(
+    brief_idx: BriefIndex,
+    new_brief: str,
+    wiki_dir: Path,
+) -> WikiPage | None:
+    """Check BM25 brief index for similar pages. Returns matched WikiPage or None."""
+    if not new_brief:
+        return None
+
+    results = brief_idx.search(new_brief, top_k=1)
+    if not results:
+        return None
+
+    path, score = results[0]
+    if score < 1.0:
+        return None
+
+    try:
+        return read_page(path, wiki_dir)
+    except Exception:
+        return None
 
 
 # ── Node functions ───────────────────────────────────────────────────────────
@@ -164,7 +210,7 @@ async def chunk_source_node(state: IngestState) -> IngestState:
 
 
 async def process_batches_node(state: IngestState) -> IngestState:
-    """Process chunks in batches with checkpoint-based resume."""
+    """Process chunks in batches with checkpoint-based resume and brief analysis."""
     chunks = state.get("chunks", [])
     if not chunks:
         return {"errors": state.get("errors", []) + ["no chunks to process"]}
@@ -176,17 +222,10 @@ async def process_batches_node(state: IngestState) -> IngestState:
     total_batches = (len(chunks) + batch_size - 1) // batch_size
     fresh = state.get("fresh", False)
 
-    # Load existing wiki page titles for prompt context
-    from src.wiki import list_pages as list_wiki_pages
-
-    wiki_titles: list[str] = []
+    # Build brief index from existing wiki pages
+    brief_idx = BriefIndex()
     if settings.wiki_dir.exists():
-        for p in list_wiki_pages(settings.wiki_dir):
-            try:
-                page = read_page(p, settings.wiki_dir)
-                wiki_titles.append(page.frontmatter.title)
-            except Exception:
-                pass
+        brief_idx.build(read_all_pages(settings.wiki_dir))
 
     # Load or create checkpoint
     cp = None if fresh else _read_checkpoint(source_path)
@@ -223,7 +262,6 @@ async def process_batches_node(state: IngestState) -> IngestState:
             batch_size=batch_size,
             source_title=source_title,
             existing_titles=cp.generated_titles,
-            wiki_titles=wiki_titles,
         )
 
         try:
@@ -235,36 +273,102 @@ async def process_batches_node(state: IngestState) -> IngestState:
 
             all_pages = [result.source_summary, *result.concept_pages, *result.entity_pages]
 
-            # Write pages (merge if title already exists on disk)
             today = date.today()
             batch_titles: list[str] = []
+            batch_briefs: dict[str, str] = {}
             for gen_page in all_pages:
+                # Step 1: exact collision check
                 existing_page = get_page_by_title(gen_page.title, settings.wiki_dir)
+
                 if existing_page is not None:
-                    merged_fm, merged_body = await merge_page(
-                        existing_page,
-                        gen_page,
-                        source_path,
+                    # Scenario A: brief analysis with full context
+                    decision = await brief_merge_check(
+                        existing_brief=existing_page.frontmatter.brief,
+                        existing_title=existing_page.frontmatter.title,
+                        new_body=gen_page.body,
                     )
-                    path = write_page(merged_fm, merged_body, settings.wiki_dir)
+                    if decision.action == "MERGE":
+                        merged_fm, merged_body = await merge_page(
+                            existing_page,
+                            gen_page,
+                            source_path,
+                        )
+                        path = write_page(merged_fm, merged_body, settings.wiki_dir)
+                        brief_idx.add(path, merged_fm.brief)
+                    else:
+                        # SKIP: don't write, record for checkpoint
+                        logger.info(
+                            "brief skip title=%s reason=%s",
+                            gen_page.title,
+                            decision.reason,
+                        )
+                        path = title_to_path(gen_page.title)
                 else:
-                    fm = WikiFrontmatter(
-                        title=gen_page.title,
-                        page_type=gen_page.page_type,
-                        sources=[source_path],
-                        tags=gen_page.tags,
-                        created=today,
-                        updated=today,
-                        confidence=gen_page.confidence,
-                        related=[title_to_path(t) for t in gen_page.related_titles],
+                    # Step 2: fuzzy collision check via BM25 brief search
+                    fuzzy_match = _check_fuzzy_collision(
+                        brief_idx,
+                        gen_page.brief,
+                        settings.wiki_dir,
                     )
-                    path = write_page(fm, gen_page.body, settings.wiki_dir)
+
+                    if fuzzy_match is not None:
+                        # Scenario B: brief vs brief → topic match
+                        fuzzy_page = fuzzy_match
+                        topic_decision = await topic_match_check(
+                            existing_title=fuzzy_page.frontmatter.title,
+                            existing_brief=fuzzy_page.frontmatter.brief,
+                            new_title=gen_page.title,
+                            new_brief=gen_page.brief,
+                        )
+                        if topic_decision.same_topic:
+                            # Same topic → Scenario A with full context
+                            merge_decision = await brief_merge_check(
+                                existing_brief=fuzzy_page.frontmatter.brief,
+                                existing_title=fuzzy_page.frontmatter.title,
+                                new_body=gen_page.body,
+                            )
+                            if merge_decision.action == "MERGE":
+                                merged_fm, merged_body = await merge_page(
+                                    fuzzy_page,
+                                    gen_page,
+                                    source_path,
+                                )
+                                path = write_page(merged_fm, merged_body, settings.wiki_dir)
+                                brief_idx.add(path, merged_fm.brief)
+                            else:
+                                logger.info(
+                                    "brief skip (fuzzy) title=%s reason=%s",
+                                    gen_page.title,
+                                    merge_decision.reason,
+                                )
+                                path = title_to_path(gen_page.title)
+                        else:
+                            # Different topic → new page
+                            path = _write_new_page(
+                                gen_page,
+                                source_path,
+                                today,
+                                settings,
+                            )
+                            brief_idx.add(path, gen_page.brief)
+                    else:
+                        # No collision at all → new page
+                        path = _write_new_page(
+                            gen_page,
+                            source_path,
+                            today,
+                            settings,
+                        )
+                        brief_idx.add(path, gen_page.brief)
+
                 all_written.append(path)
                 batch_titles.append(gen_page.title)
+                batch_briefs[gen_page.title] = gen_page.brief
 
-            # Update checkpoint (only after pages written — batch atomicity)
+            # Update checkpoint
             cp.completed_batches.append(batch_idx)
             cp.generated_titles.extend(batch_titles)
+            cp.generated_briefs.update(batch_briefs)
             _write_checkpoint(cp)
 
             logger.info(

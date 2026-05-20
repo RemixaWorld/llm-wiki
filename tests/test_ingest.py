@@ -22,6 +22,7 @@ from src.models import (
     Confidence,
     GeneratedPage,
     IngestResult,
+    MergeDecision,
     PageType,
     WikiFrontmatter,
 )
@@ -356,7 +357,9 @@ class TestProcessBatchesMerge:
             patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
         ):
             mock_llm.return_value = mock_ingest_result
+            # brief_merge_check → MergeDecision, then merge_page → PatchedPage, BriefOutput
             mock_merge_llm.side_effect = [
+                MergeDecision(action="MERGE", reason="new pre-training info"),
                 mock_patched,
                 BriefOutput(brief="BERT: merged brief."),
             ]
@@ -375,28 +378,22 @@ class TestProcessBatchesMerge:
 
 
 class TestBuildBatchMessages:
-    def test_includes_wiki_titles_in_prompt(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        wiki_dir = tmp_path / "wiki"
-        wiki_dir.mkdir()
-        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
-        import src.config
+    def test_includes_existing_titles_in_prompt(self) -> None:
+        from src.ingest import _build_batch_messages
 
-        src.config._settings = None
-
-        # Create an existing page on disk
-        from src.wiki import write_page
-
-        fm = WikiFrontmatter(
-            title="Existing Topic",
-            page_type=PageType.CONCEPT,
-            sources=["old.pdf"],
-            created=date(2026, 1, 1),
-            updated=date(2026, 1, 1),
+        messages = _build_batch_messages(
+            chunks=["chunk text"],
+            batch_start=0,
+            batch_size=5,
+            source_title="Test Source",
+            existing_titles=["Flash Attention", "Self-Attention"],
         )
-        write_page(fm, "Content.", wiki_dir)
 
+        user_msg = messages[1]["content"]
+        assert "Flash Attention" in user_msg
+        assert "Self-Attention" in user_msg
+
+    def test_no_existing_titles_no_title_list(self) -> None:
         from src.ingest import _build_batch_messages
 
         messages = _build_batch_messages(
@@ -405,31 +402,10 @@ class TestBuildBatchMessages:
             batch_size=5,
             source_title="Test Source",
             existing_titles=[],
-            wiki_titles=["Existing Topic"],
         )
 
         user_msg = messages[1]["content"]
-        assert "Existing Topic" in user_msg
-
-        src.config._settings = None
-
-    def test_dedupes_combined_titles(self) -> None:
-        from src.ingest import _build_batch_messages
-
-        messages = _build_batch_messages(
-            chunks=["chunk text"],
-            batch_start=0,
-            batch_size=5,
-            source_title="Test Source",
-            existing_titles=["BERT", "GPT"],
-            wiki_titles=["BERT", "Transformer"],
-        )
-
-        user_msg = messages[1]["content"]
-        # BERT should appear only once in the combined list
-        assert user_msg.count("BERT") == 1
-        assert "GPT" in user_msg
-        assert "Transformer" in user_msg
+        assert "already exist" not in user_msg
 
 
 class TestCrossSourceMerge:
@@ -508,7 +484,9 @@ class TestCrossSourceMerge:
             patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
         ):
             mock_llm.return_value = source_b_result
+            # brief_merge_check → MergeDecision, then merge_page → PatchedPage, BriefOutput
             mock_merge_llm.side_effect = [
+                MergeDecision(action="MERGE", reason="new pre-training details from source B"),
                 mock_patched,
                 BriefOutput(brief="BERT: bidirectional encoder with pre-training."),
             ]
@@ -528,3 +506,104 @@ class TestCrossSourceMerge:
         assert "source-b-summary.md" in result.get("written_paths", [])
 
         src.config._settings = None
+
+
+class TestBriefAnalysis:
+    @pytest.mark.asyncio
+    async def test_build_batch_messages_no_wiki_titles(self) -> None:
+        """_build_batch_messages no longer accepts wiki_titles parameter."""
+        from src.ingest import _build_batch_messages
+
+        messages = _build_batch_messages(
+            chunks=["chunk1", "chunk2"],
+            batch_start=0,
+            batch_size=2,
+            source_title="Test Paper",
+            existing_titles=["Flash Attention", "Self-Attention"],
+        )
+        assert "Flash Attention" in messages[1]["content"]
+        assert "Self-Attention" in messages[1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_build_batch_messages_empty_existing_titles(self) -> None:
+        """No existing titles → no title list injected."""
+        from src.ingest import _build_batch_messages
+
+        messages = _build_batch_messages(
+            chunks=["chunk1"],
+            batch_start=0,
+            batch_size=1,
+            source_title="Test",
+            existing_titles=[],
+        )
+        assert "already exist" not in messages[1]["content"]
+
+    def test_check_fuzzy_collision_returns_page(self, tmp_path: Path) -> None:
+        """Fuzzy collision via BM25 returns matched WikiPage."""
+        from src.ingest import _check_fuzzy_collision
+        from src.search import BriefIndex
+
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+
+        # Need 3+ pages so BM25 IDF is non-zero (N=2 makes IDF=0 for all terms)
+        fm1 = WikiFrontmatter(
+            title="Flash Attention",
+            page_type=PageType.CONCEPT,
+            brief="IO-aware exact attention algorithm using tiling for memory optimization.",
+            sources=["test.pdf"],
+            tags=["attention"],
+            created=date(2026, 5, 20),
+            updated=date(2026, 5, 20),
+            confidence=Confidence.HIGH,
+        )
+        write_page(fm1, "Body.", wiki_dir)
+        fm2 = WikiFrontmatter(
+            title="Reinforcement Learning",
+            page_type=PageType.CONCEPT,
+            brief="Agent learns optimal policy through environment interaction and rewards.",
+            sources=["test.pdf"],
+            tags=["rl"],
+            created=date(2026, 5, 20),
+            updated=date(2026, 5, 20),
+            confidence=Confidence.HIGH,
+        )
+        write_page(fm2, "Body.", wiki_dir)
+        fm3 = WikiFrontmatter(
+            title="Gradient Descent",
+            page_type=PageType.CONCEPT,
+            brief="Optimization algorithm for minimizing loss in neural networks.",
+            sources=["test.pdf"],
+            tags=["optimization"],
+            created=date(2026, 5, 20),
+            updated=date(2026, 5, 20),
+            confidence=Confidence.HIGH,
+        )
+        write_page(fm3, "Body.", wiki_dir)
+
+        from src.wiki import read_all_pages
+
+        pages = read_all_pages(wiki_dir)
+        idx = BriefIndex()
+        idx.build(pages)
+
+        result = _check_fuzzy_collision(
+            brief_idx=idx,
+            new_brief="Attention optimization using memory tiling techniques.",
+            wiki_dir=wiki_dir,
+        )
+        assert result is not None
+        assert result.frontmatter.title == "Flash Attention"
+
+    def test_check_fuzzy_collision_no_match(self, tmp_path: Path) -> None:
+        """No fuzzy match → returns None."""
+        from src.ingest import _check_fuzzy_collision
+        from src.search import BriefIndex
+
+        idx = BriefIndex()
+        result = _check_fuzzy_collision(
+            brief_idx=idx,
+            new_brief="Something completely different.",
+            wiki_dir=tmp_path,
+        )
+        assert result is None
