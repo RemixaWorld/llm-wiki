@@ -97,7 +97,7 @@ async def complete_structured(  # noqa: UP047
 ) -> T:
     """Call LLM with fallback chain and return structured Pydantic output.
 
-    Tries providers in order: MiniMax → Groq → Gemini → Ollama.
+    Tries providers in order: MiniMax → DeepSeek → Groq → Gemini → Ollama.
     Uses instructor for structured output extraction.
     """
     providers = _get_providers()
