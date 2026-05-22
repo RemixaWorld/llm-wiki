@@ -25,6 +25,8 @@ dependencies = [
     "httpx>=0.28.0,<1.0",
     "pymupdf>=1.25.0,<2.0",
     "trafilatura>=2.0.0,<3.0",
+    "beautifulsoup4>=4.12,<5.0",
+    "html2text>=2024.2,<2025.0",
     "tiktoken>=0.9.0,<1.0",
 ]
 
@@ -37,6 +39,7 @@ dev = [
     "hypothesis>=6.100.0,<7.0",
     "pre-commit>=3.7.0,<5.0",
 ]
+browser = ["playwright>=1.40,<2.0"]
 
 [project.scripts]
 wiki = "src.cli:main"
