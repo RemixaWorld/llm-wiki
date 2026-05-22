@@ -16,6 +16,17 @@ from src.fetcher.url_utils import is_medium_url
 logger = logging.getLogger(__name__)
 
 
+def _load_cookies() -> dict[str, str]:
+    """Load cookies from cookies.json if it exists."""
+    import json
+
+    try:
+        data = json.loads(Path("cookies.json").read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
 async def run_fetch(
     urls: list[str],
     web_dir: Path,
@@ -49,6 +60,10 @@ async def run_fetch(
 
     if not to_fetch:
         return [r for u in collected if (r := read_cache(u, web_dir)) is not None]
+
+    # Load cookies from cookies.json if not explicitly provided
+    if cookies is None:
+        cookies = _load_cookies()
 
     # Fetch via httpx
     results = await fetch_urls(to_fetch, cookies=cookies, concurrency=concurrency)
