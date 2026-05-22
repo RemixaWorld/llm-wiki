@@ -31,9 +31,8 @@ def main() -> None:
 
 @main.command()
 @click.argument("source")
-@click.option("--url", is_flag=True, help="Treat SOURCE as a URL instead of file path.")
 @click.option("--fresh", is_flag=True, help="Ignore checkpoint, start from scratch.")
-def ingest(source: str, url: bool, fresh: bool) -> None:
+def ingest(source: str, fresh: bool) -> None:
     """Ingest a source file or URL into the wiki."""
     from src.ingest import run_ingest
 
@@ -50,6 +49,53 @@ def ingest(source: str, url: bool, fresh: bool) -> None:
     click.secho(f"Created {len(written)} pages:", fg="green")
     for p in written:
         click.echo(f"  wiki/{p}")
+
+
+@main.command()
+@click.argument("urls", nargs=-1, required=True)
+@click.option("--urls-file", default=None, help="File with URLs, one per line.")
+@click.option("--retry-failed", is_flag=True, help="Re-fetch previously failed URLs.")
+@click.option("--browser", is_flag=True, help="Enable Playwright browser fallback.")
+@click.option("--concurrency", default=10, type=int, help="Max concurrent requests.")
+def fetch(urls: tuple[str, ...], urls_file: str | None, retry_failed: bool, browser: bool, concurrency: int) -> None:
+    """Fetch URL(s) and cache content to data/web/."""
+    from pathlib import Path
+
+    from src.fetcher import run_fetch
+
+    settings = get_settings()
+    web_dir = settings.sources_dir.parent / "data" / "web"
+
+    results = asyncio.run(run_fetch(
+        list(urls),
+        web_dir,
+        urls_file=urls_file,
+        retry_failed=retry_failed,
+        use_browser=browser,
+        concurrency=concurrency,
+    ))
+
+    ok = sum(1 for r in results if r.status == "ok")
+    failed = sum(1 for r in results if r.status != "ok")
+
+    for r in results:
+        if r.status == "ok":
+            color = "green"
+        elif r.status in ("duplicate", "low_quality"):
+            color = "yellow"
+        else:
+            color = "red"
+        click.secho(f"  [{r.status}] {r.url}", fg=color)
+        if r.title and r.status == "ok":
+            click.echo(f"    title: {r.title}")
+        if r.error:
+            click.echo(f"    error: {r.error}")
+
+    click.echo()
+    if failed:
+        click.secho(f"Done: {ok} fetched, {failed} issues", fg="yellow")
+    else:
+        click.secho(f"Done: {ok} fetched, {failed} issues", fg="green")
 
 
 @main.command(name="ingest-all")
