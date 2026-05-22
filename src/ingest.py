@@ -82,6 +82,19 @@ def _source_modified(source_path: str, cp: Checkpoint) -> bool:
     return source_mtime > created
 
 
+def is_source_processed(source_path: str, wiki_dir: Path) -> bool:
+    """Check if a source has already been processed by looking for wiki pages that reference it."""
+    from src.wiki import read_all_pages
+
+    if not wiki_dir.exists():
+        return False
+
+    pages = read_all_pages(wiki_dir)
+    return any(
+        any(source_path in src for src in page.frontmatter.sources) for page in pages
+    )
+
+
 # ── State ────────────────────────────────────────────────────────────────────
 
 
@@ -222,7 +235,23 @@ def _check_fuzzy_collision(
 async def extract_text_node(state: IngestState) -> IngestState:
     """Extract text from the source file or URL."""
     try:
-        result = extract_source(state["source_path"])
+        source = state["source_path"]
+        if source.startswith(("http://", "https://")):
+            from src.fetcher import fetch_single
+
+            settings = get_settings()
+            result = await fetch_single(source, settings.web_data_dir)
+            if result.status != "ok":
+                msg = f"URL fetch failed: {source} status={result.status} error={result.error}"
+                raise ValueError(msg)
+
+            title = result.title or source
+            return {
+                "extracted_text": result.content or "",
+                "source_title": title,
+            }
+
+        result = extract_source(source)
         return {
             "extracted_text": result.content,
             "source_title": result.title,
@@ -264,6 +293,13 @@ async def process_batches_node(state: IngestState) -> IngestState:
 
     # Load or create checkpoint
     cp = None if fresh else _read_checkpoint(source_path)
+
+    # Skip if already fully processed (source has wiki pages referencing it)
+    # Checkpoint takes priority over source-processed check (can resume partial batches)
+    if cp is None and not fresh and is_source_processed(source_path, settings.wiki_dir):
+        logger.info("source already processed, skipping: %s", source_path)
+        return {"written_paths": [], "errors": []}
+
     if cp is not None and cp.total_chunks != len(chunks):
         logger.info(
             "chunk count changed old=%d new=%d, starting fresh",

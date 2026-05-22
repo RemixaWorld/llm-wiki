@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # Paths
     wiki_dir: Path = Path("wiki")
     sources_dir: Path = Path("sources")
+    web_data_dir: Path = Path("data/web")
     schema_path: Path = Path("schema.yaml")
 
     # LLM providers (LiteLLM model strings)
@@ -47,7 +48,7 @@ class Settings(BaseSettings):
     batch_size: int = Field(default=5, gt=0)
 
     # Concurrency
-    max_concurrent_llm: int = Field(default=3, gt=0)
+    max_concurrent_llm: int = Field(default=4, gt=0)
 
     # Search
     bm25_k1: float = 1.5
