@@ -80,10 +80,12 @@ def parse_cookie_string(cookie_str: str, domain: str) -> list[dict]:
         pair = pair.strip()
         if "=" in pair:
             name, value = pair.split("=", 1)
-            cookies.append({
-                "name": name.strip(),
-                "value": value.strip(),
-                "domain": domain,
-                "path": "/",
-            })
+            cookies.append(
+                {
+                    "name": name.strip(),
+                    "value": value.strip(),
+                    "domain": domain,
+                    "path": "/",
+                }
+            )
     return cookies

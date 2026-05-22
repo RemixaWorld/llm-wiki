@@ -40,7 +40,12 @@ async def run_fetch(
 
     # Filter out already-cached ok URLs
     to_fetch = [u for u in collected if not is_cached_ok(u, web_dir)]
-    logger.info("urls total=%d cached=%d to_fetch=%d", len(collected), len(collected) - len(to_fetch), len(to_fetch))
+    logger.info(
+        "urls total=%d cached=%d to_fetch=%d",
+        len(collected),
+        len(collected) - len(to_fetch),
+        len(to_fetch),
+    )
 
     if not to_fetch:
         return [r for u in collected if (r := read_cache(u, web_dir)) is not None]
@@ -55,12 +60,16 @@ async def run_fetch(
             continue
         quality = check_quality(r.content)
         if not quality.passed:
-            status = quality.reason if quality.reason in ("error_page", "low_quality") else "low_quality"
+            status = (
+                quality.reason if quality.reason in ("error_page", "low_quality") else "low_quality"
+            )
             results[i] = r.model_copy(update={"status": status})
             continue
         dup = dedup.check(r.domain, r.content)
         if dup:
-            results[i] = r.model_copy(update={"status": "duplicate", "error": f"duplicate of {dup}"})
+            results[i] = r.model_copy(
+                update={"status": "duplicate", "error": f"duplicate of {dup}"}
+            )
 
     # Write all results to cache
     for r in results:
@@ -68,8 +77,7 @@ async def run_fetch(
 
     # Browser retry
     browser_needed = [
-        r for r in results
-        if r.status == "failed" and (is_medium_url(r.url) or use_browser)
+        r for r in results if r.status == "failed" and (is_medium_url(r.url) or use_browser)
     ]
     if browser_needed:
         try:
@@ -83,6 +91,7 @@ async def run_fetch(
                         content = extract_medium_content(br.html) if is_medium_url(r.url) else None
                         if content is None:
                             from src.fetcher.content_extractor import extract_content
+
                             content = extract_content(br.html, r.url)
                         quality = check_quality(content)
                         final_status = "ok" if quality.passed else "low_quality"
@@ -113,6 +122,11 @@ async def fetch_single(url: str, web_dir: Path, *, use_browser: bool = False) ->
     if results:
         return results[0]
     import datetime
+
     return FetchResult(
-        url=url, status="failed", domain="", fetch_date=datetime.datetime.now(), error="no result",
+        url=url,
+        status="failed",
+        domain="",
+        fetch_date=datetime.datetime.now(),
+        error="no result",
     )

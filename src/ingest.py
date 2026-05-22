@@ -90,9 +90,7 @@ def is_source_processed(source_path: str, wiki_dir: Path) -> bool:
         return False
 
     pages = read_all_pages(wiki_dir)
-    return any(
-        any(source_path in src for src in page.frontmatter.sources) for page in pages
-    )
+    return any(any(source_path in src for src in page.frontmatter.sources) for page in pages)
 
 
 # ── State ────────────────────────────────────────────────────────────────────

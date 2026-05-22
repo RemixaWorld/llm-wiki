@@ -57,23 +57,29 @@ def ingest(source: str, fresh: bool) -> None:
 @click.option("--retry-failed", is_flag=True, help="Re-fetch previously failed URLs.")
 @click.option("--browser", is_flag=True, help="Enable Playwright browser fallback.")
 @click.option("--concurrency", default=10, type=int, help="Max concurrent requests.")
-def fetch(urls: tuple[str, ...], urls_file: str | None, retry_failed: bool, browser: bool, concurrency: int) -> None:
+def fetch(
+    urls: tuple[str, ...],
+    urls_file: str | None,
+    retry_failed: bool,
+    browser: bool,
+    concurrency: int,
+) -> None:
     """Fetch URL(s) and cache content to data/web/."""
-    from pathlib import Path
-
     from src.fetcher import run_fetch
 
     settings = get_settings()
     web_dir = settings.sources_dir.parent / "data" / "web"
 
-    results = asyncio.run(run_fetch(
-        list(urls),
-        web_dir,
-        urls_file=urls_file,
-        retry_failed=retry_failed,
-        use_browser=browser,
-        concurrency=concurrency,
-    ))
+    results = asyncio.run(
+        run_fetch(
+            list(urls),
+            web_dir,
+            urls_file=urls_file,
+            retry_failed=retry_failed,
+            use_browser=browser,
+            concurrency=concurrency,
+        )
+    )
 
     ok = sum(1 for r in results if r.status == "ok")
     failed = sum(1 for r in results if r.status != "ok")
@@ -116,7 +122,9 @@ def ingest_all(pattern: str, fresh: bool) -> None:
         click.secho(f"No files matching '{pattern}' in {settings.sources_dir}/", fg="yellow")
         return
 
-    click.echo(f"Found {len(sources)} source(s) to ingest (concurrency={settings.max_concurrent_llm}).")
+    click.echo(
+        f"Found {len(sources)} source(s) to ingest (concurrency={settings.max_concurrent_llm})."
+    )
 
     async def _ingest_all_concurrent() -> list:
         semaphore = asyncio.Semaphore(settings.max_concurrent_llm)

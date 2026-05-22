@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 from urllib.parse import urlparse
 
-
 MEDIUM_DOMAINS = {
     "medium.com",
     "levelup.gitconnected.com",
