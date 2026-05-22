@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.extract import chunk_text, count_tokens, extract_source, extract_text
+from src.extract import chunk_text, count_tokens, extract_source, extract_text, extract_url
 
 
 class TestCountTokens:
@@ -102,3 +102,30 @@ class TestChunkText:
         # Each paragraph is ~40 tokens, should be one per chunk
         for chunk in chunks:
             assert count_tokens(chunk) <= 60  # generous upper bound
+
+
+class TestExtractUrl:
+    def test_extract_url_uses_cache(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from datetime import datetime
+
+        from src.config import Settings
+        from src.fetcher.cache import write_cache
+        from src.fetcher.types import FetchResult
+
+        settings = Settings(sources_dir=tmp_path / "sources")
+        monkeypatch.setattr("src.extract.get_settings", lambda: settings)
+
+        web_dir = tmp_path / "data" / "web"
+        now = datetime.now()
+        cached = FetchResult(
+            url="https://example.com/test",
+            status="ok",
+            content="cached content here",
+            domain="example.com",
+            fetch_date=now,
+        )
+        write_cache(cached, web_dir)
+
+        result = extract_url("https://example.com/test")
+        assert result.content == "cached content here"
+        assert result.source_type == "url"

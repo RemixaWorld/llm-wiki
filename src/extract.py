@@ -58,7 +58,25 @@ def extract_pdf(path: Path) -> ExtractedSource:
 
 
 def extract_url(url: str) -> ExtractedSource:
-    """Extract text from a URL using trafilatura."""
+    """Extract text from a URL. Uses data/web/ cache if available."""
+    from src.fetcher.cache import read_cache
+
+    settings = get_settings()
+    web_dir = settings.sources_dir.parent / "data" / "web"
+
+    # Check cache first
+    cached = read_cache(url, web_dir)
+    if cached and cached.content:
+        title = cached.title or url
+        logger.info("extracted url from cache url=%s tokens=%d", url, count_tokens(cached.content))
+        return ExtractedSource(
+            content=cached.content,
+            source_type="url",
+            title=title,
+            metadata={"url": url},
+        )
+
+    # Fallback to trafilatura (existing behavior)
     import trafilatura
 
     downloaded = trafilatura.fetch_url(url)
