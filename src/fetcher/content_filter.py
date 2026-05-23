@@ -2,6 +2,21 @@ from __future__ import annotations
 
 from src.fetcher.types import QualityResult
 
+PAYWALL_MARKERS = (
+    "don't settle for shallow",
+    "join premium members",
+    "this article is for subscribers",
+    "subscribe to continue reading",
+    "already a subscriber? sign in",
+    "subscribe to get full access",
+    "become a subscriber",
+    "to continue reading this article",
+)
+
+
+def _strip_md(text: str) -> str:
+    return text.replace("*", "").replace("_", "").replace("#", "")
+
 
 def check_quality(text: str | None) -> QualityResult:
     if not text:
@@ -24,5 +39,10 @@ def check_quality(text: str | None) -> QualityResult:
 
     if len(stripped) < 200:
         return QualityResult(passed=False, reason="too_short")
+
+    cleaned = _strip_md(lower)
+    for marker in PAYWALL_MARKERS:
+        if marker in cleaned:
+            return QualityResult(passed=False, reason="paywalled")
 
     return QualityResult(passed=True)

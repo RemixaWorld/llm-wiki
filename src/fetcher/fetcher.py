@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from src.config import get_settings
 from src.fetcher.content_extractor import extract_content
 from src.fetcher.substack_fetcher import SubstackAuth, fetch_substack
 from src.fetcher.types import FetchResult
@@ -41,7 +42,11 @@ async def fetch_urls(
     semaphore = asyncio.Semaphore(concurrency)
     substack_auth = _build_substack_auth(cookies)
 
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+    settings = get_settings()
+    proxy = settings.http_proxy or None
+    async with httpx.AsyncClient(
+        timeout=timeout, follow_redirects=True, proxy=proxy
+    ) as client:
 
         async def fetch_one(url: str) -> FetchResult:
             async with semaphore:

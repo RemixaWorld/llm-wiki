@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from html2text import HTML2Text
 from pydantic import BaseModel
 
+from src.config import get_settings
 from src.fetcher.types import FetchResult
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,11 @@ async def fetch_substack(
         headers["Cookie"] = auth.cookie_header()
 
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        settings = get_settings()
+        proxy = settings.http_proxy or None
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=True, proxy=proxy
+        ) as client:
             resp = await client.get(api_url, headers=headers)
 
         if resp.status_code == 404:

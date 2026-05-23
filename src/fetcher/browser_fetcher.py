@@ -29,16 +29,20 @@ async def fetch_with_browser(
     cookies: list[dict] | None = None,
     timeout: int = 30,
     auth_url: str | None = None,
+    proxy: str | None = None,
 ) -> BrowserFetchResult:
     domain = urlparse(url).netloc
     now = datetime.now()
     context = None
 
     try:
-        context = await browser.new_context(
-            user_agent=DEFAULT_USER_AGENT,
-            bypass_csp=True,
-        )
+        context_opts: dict = {
+            "user_agent": DEFAULT_USER_AGENT,
+            "bypass_csp": True,
+        }
+        if proxy:
+            context_opts["proxy"] = {"server": proxy}
+        context = await browser.new_context(**context_opts)
 
         if cookies:
             await context.add_cookies(cookies)
@@ -50,6 +54,7 @@ async def fetch_with_browser(
             await page.wait_for_timeout(2000)
 
         await page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+        await page.wait_for_timeout(3000)
         html = await page.content()
 
         return BrowserFetchResult(

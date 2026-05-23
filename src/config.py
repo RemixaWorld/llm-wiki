@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
 
+    # Network
+    http_proxy: str = "http://127.0.0.1:11888"
+
     # Logging
     log_level: str = "INFO"
     log_json: bool = False

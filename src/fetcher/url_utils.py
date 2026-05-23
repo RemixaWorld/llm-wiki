@@ -44,3 +44,7 @@ def is_medium_url(url: str) -> bool:
 
 def is_substack_url(url: str) -> bool:
     return ".substack.com/p/" in url
+
+
+def is_beehiiv_url(url: str) -> bool:
+    return "/p/" in url and not is_substack_url(url) and not is_medium_url(url)
