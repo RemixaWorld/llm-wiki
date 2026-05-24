@@ -182,7 +182,7 @@ def build_ingest_summary_table(
         f"[bold]{total_new}[/bold]",
         f"[bold]{total_merge}[/bold]",
         f"[bold]{total_skip}[/bold]",
-        f"[bold]{total_duration:.1f}s[/bold]",
+        f"[bold]{total_duration / 60:.1f}m[/bold]",
         "",
     )
 
