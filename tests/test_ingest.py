@@ -1187,6 +1187,30 @@ class TestBriefAnalysis:
         )
         assert "Previously generated" not in messages[1]["content"]
 
+    def test_build_batch_messages_respects_max_pages_per_type(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Focused-mode prompt uses WIKI_MAX_PAGES_PER_TYPE instead of hardcoded 1-3."""
+        monkeypatch.setenv("WIKI_MAX_PAGES_PER_TYPE", "5")
+        import src.config
+
+        src.config._settings = None
+
+        from src.ingest import _build_batch_messages
+
+        msgs = _build_batch_messages(
+            chunks=["Some text about AI."],
+            batch_start=0,
+            batch_size=1,
+            source_title="Test",
+            existing_briefs={},
+            is_short=False,
+        )
+        user_msg = msgs[1]["content"]
+        assert "1-5 concept_pages and 1-5 entity_pages" in user_msg
+
+        src.config._settings = None
+
     def test_check_fuzzy_collision_returns_page(self, tmp_path: Path) -> None:
         """Fuzzy collision via BM25 returns matched WikiPage."""
         from src.ingest import _check_fuzzy_collision

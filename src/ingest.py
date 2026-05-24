@@ -156,8 +156,10 @@ def _build_batch_messages(
     else:
         ingest_mode = get_ingest_mode()
         if ingest_mode == "focused":
+            settings = get_settings()
+            n = settings.max_pages_per_type
             user_parts.append(
-                "IMPORTANT: Generate only 1-3 concept_pages and 1-3 entity_pages. "
+                f"IMPORTANT: Generate only 1-{n} concept_pages and 1-{n} entity_pages. "
                 "Focus on the most important concepts and entities:\n"
                 "- Core topic/thesis of the source (not tangential mentions)\n"
                 "- Entities/concepts with standalone knowledge value "
