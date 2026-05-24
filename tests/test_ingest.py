@@ -24,6 +24,7 @@ from src.models import (
     Confidence,
     GeneratedPage,
     IngestResult,
+    IngestStats,
     PageType,
     WikiFrontmatter,
 )
@@ -1370,3 +1371,296 @@ class TestParallelMerge:
         assert len(result["written_paths"]) == 3  # summary + 2 merges
 
         src.config._settings = None
+
+
+class TestIngestStats:
+    @pytest.mark.asyncio
+    async def test_stats_new_pages(
+        self, tmp_path: Path, mock_ingest_result: IngestResult, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """All pages are new (no collisions) → stats.new == 3, page_types counted."""
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        state = {
+            "chunks": ["Source text about transformers and BERT."],
+            "source_path": "test.txt",
+            "source_title": "Test Source",
+            "fresh": True,
+        }
+
+        with patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = mock_ingest_result
+            result = await process_batches_node(state)
+
+        stats = result.get("stats")
+        assert stats is not None
+        assert isinstance(stats, IngestStats)
+        assert stats.new == 3  # source_summary + concept + entity
+        assert stats.merge == 0
+        assert stats.skip == 0
+        assert stats.skip_fuzzy_new == 0
+        assert stats.page_types.get("source_summary") == 1
+        assert stats.page_types.get("concept") == 1
+        assert stats.page_types.get("entity") == 1
+
+        src.config._settings = None
+
+    @pytest.mark.asyncio
+    async def test_stats_with_merge(
+        self, tmp_path: Path, mock_ingest_result: IngestResult, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One exact collision → MERGE → stats.merge == 1, stats.new == 2."""
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        # Pre-create BERT page → exact collision
+        existing_fm = WikiFrontmatter(
+            title="BERT",
+            page_type=PageType.ENTITY,
+            sources=["old/source.pdf"],
+            tags=["nlp"],
+            created=date(2026, 1, 1),
+            updated=date(2026, 1, 1),
+            confidence=Confidence.HIGH,
+            brief="Bidirectional encoder model.",
+        )
+        write_page(existing_fm, "# BERT\n\nOld content.", wiki_dir)
+
+        from src.models import EditOp, PatchedPage
+
+        mock_patched = PatchedPage(
+            edits=[
+                EditOp(
+                    old_string="# BERT\n\nOld content.",
+                    new_string="# BERT\n\nMerged content.",
+                ),
+            ],
+            tags_to_add=["pre-training"],
+            confidence=Confidence.HIGH,
+        )
+
+        state = {
+            "chunks": ["Source text about BERT."],
+            "source_path": "new-source.txt",
+            "source_title": "New Source",
+            "fresh": True,
+        }
+
+        with (
+            patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm,
+            patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
+        ):
+            mock_llm.return_value = mock_ingest_result
+            mock_merge_llm.side_effect = [
+                BatchCollisionDecision(
+                    decisions=[
+                        CollisionDecision(
+                            new_title="BERT", action="MERGE", reason="new info"
+                        ),
+                    ]
+                ),
+                mock_patched,
+                BriefOutput(brief="BERT merged."),
+            ]
+            result = await process_batches_node(state)
+
+        stats = result.get("stats")
+        assert stats is not None
+        assert stats.merge == 1
+        assert stats.new == 2  # source_summary + concept (no entity, merged)
+        assert stats.skip == 0
+        assert stats.skip_fuzzy_new == 0
+        assert stats.page_types.get("entity") == 1  # the merged entity
+
+        src.config._settings = None
+
+    @pytest.mark.asyncio
+    async def test_stats_with_exact_skip(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Exact collision → LLM says SKIP → stats.skip == 1."""
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        # Pre-create BERT page
+        write_page(
+            WikiFrontmatter(
+                title="BERT",
+                page_type=PageType.ENTITY,
+                sources=["old.pdf"],
+                tags=["nlp"],
+                created=date(2026, 1, 1),
+                updated=date(2026, 1, 1),
+                confidence=Confidence.HIGH,
+                brief="Bidirectional encoder.",
+            ),
+            "# BERT\n\nBody.",
+            wiki_dir,
+        )
+
+        ingest_result = IngestResult(
+            source_summary=GeneratedPage(
+                title="Summary",
+                page_type=PageType.SOURCE_SUMMARY,
+                tags=[],
+                confidence=Confidence.HIGH,
+                body="Summary.",
+            ),
+            concept_pages=[],
+            entity_pages=[
+                GeneratedPage(
+                    title="BERT",
+                    page_type=PageType.ENTITY,
+                    tags=["nlp"],
+                    confidence=Confidence.HIGH,
+                    body="# BERT\n\nDetails.",
+                    brief="BERT details.",
+                ),
+            ],
+        )
+
+        state = {
+            "chunks": ["Text about BERT."],
+            "source_path": "test.txt",
+            "source_title": "Test",
+            "fresh": True,
+        }
+
+        with (
+            patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm,
+            patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
+        ):
+            mock_llm.return_value = ingest_result
+            mock_merge_llm.return_value = BatchCollisionDecision(
+                decisions=[
+                    CollisionDecision(new_title="BERT", action="SKIP", reason="already covered"),
+                ]
+            )
+            result = await process_batches_node(state)
+
+        stats = result.get("stats")
+        assert stats is not None
+        assert stats.skip == 1
+        assert stats.new == 1  # just the summary
+        assert stats.merge == 0
+        assert stats.page_types.get("entity") == 1  # the skipped entity
+
+        src.config._settings = None
+
+    @pytest.mark.asyncio
+    async def test_stats_with_fuzzy_skip_new(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fuzzy collision → LLM says SKIP → written as new → stats.skip_fuzzy_new == 1."""
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        # Create 3+ pages for BM25 IDF
+        for title, brief in [
+            ("Flash Attention", "IO-aware exact attention algorithm using tiling."),
+            ("Reinforcement Learning", "Agent learns through environment interaction."),
+            ("Gradient Descent", "Optimization algorithm for minimizing loss."),
+        ]:
+            write_page(
+                WikiFrontmatter(
+                    title=title,
+                    page_type=PageType.CONCEPT,
+                    sources=["old.pdf"],
+                    tags=[],
+                    created=date(2026, 1, 1),
+                    updated=date(2026, 1, 1),
+                    confidence=Confidence.HIGH,
+                    brief=brief,
+                ),
+                f"# {title}\n\nBody.",
+                wiki_dir,
+            )
+
+        ingest_result = IngestResult(
+            source_summary=GeneratedPage(
+                title="Summary",
+                page_type=PageType.SOURCE_SUMMARY,
+                tags=[],
+                confidence=Confidence.HIGH,
+                body="Summary.",
+                brief="Source summary.",
+            ),
+            concept_pages=[
+                GeneratedPage(
+                    title="Memory-Efficient Attention",
+                    page_type=PageType.CONCEPT,
+                    tags=["attention"],
+                    confidence=Confidence.HIGH,
+                    body="# Memory-Efficient Attention\n\nDetails.",
+                    brief="Attention optimization using memory tiling techniques.",
+                ),
+            ],
+            entity_pages=[],
+        )
+
+        state = {
+            "chunks": ["Text about memory-efficient attention."],
+            "source_path": "test.txt",
+            "source_title": "Test",
+            "fresh": True,
+        }
+
+        with (
+            patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm,
+            patch("src.merge.complete_structured", new_callable=AsyncMock) as mock_merge_llm,
+        ):
+            mock_llm.return_value = ingest_result
+            mock_merge_llm.return_value = BatchCollisionDecision(
+                decisions=[
+                    CollisionDecision(
+                        new_title="Memory-Efficient Attention",
+                        action="SKIP",
+                        reason="different topic",
+                    ),
+                ]
+            )
+            result = await process_batches_node(state)
+
+        stats = result.get("stats")
+        assert stats is not None
+        assert stats.skip_fuzzy_new == 1
+        assert stats.new == 1  # just the summary
+        assert stats.merge == 0
+        assert stats.skip == 0
+        assert stats.page_types.get("concept") == 1  # the fuzzy-skipped concept
+
+        src.config._settings = None
+
+    @pytest.mark.asyncio
+    async def test_stats_zero_on_empty_chunks(self) -> None:
+        """No chunks → no stats field (early return with errors)."""
+        state = {"chunks": [], "source_path": "test.txt"}
+        result = await process_batches_node(state)
+        assert "errors" in result
+        # Early return path doesn't set stats
+        assert "stats" not in result or result.get("stats") is None

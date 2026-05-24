@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from collections import Counter, defaultdict
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TypedDict
@@ -20,6 +22,7 @@ from src.models import (
     CollisionPair,
     GeneratedPage,
     IngestResult,
+    IngestStats,
     WikiFrontmatter,
     WikiPage,
 )
@@ -105,6 +108,7 @@ class IngestState(TypedDict, total=False):
     written_paths: list[str]
     updated_pages: list[str]
     errors: list[str]
+    stats: IngestStats
 
 
 # ── Batch helpers ────────────────────────────────────────────────────────────
@@ -319,6 +323,7 @@ async def process_batches_node(state: IngestState) -> IngestState:
 
     all_written: list[str] = []
     errors = list(state.get("errors", []))
+    op_counts: dict[str, Counter] = defaultdict(Counter)
 
     for batch_idx in range(total_batches):
         if batch_idx in cp.completed_batches:
@@ -412,6 +417,7 @@ async def process_batches_node(state: IngestState) -> IngestState:
                     else:
                         # No collision → new page
                         new_pages.append(gen_page)
+                        op_counts["new"][gen_page.page_type.value] += 1
 
             # Phase 2: Write new pages immediately
             for gen_page in new_pages:
@@ -440,14 +446,17 @@ async def process_batches_node(state: IngestState) -> IngestState:
 
                     if decision.action == "MERGE":
                         merge_tasks.append((decision, gen_page, existing_page))
+                        op_counts["merge"][gen_page.page_type.value] += 1
                     elif collision_type == "fuzzy":
                         skip_fuzzy.append((decision, gen_page))
+                        op_counts["skip_fuzzy_new"][gen_page.page_type.value] += 1
                     else:
                         logger.info(
                             "batch skip title=%s reason=%s",
                             gen_page.title,
                             decision.reason,
                         )
+                        op_counts["skip"][gen_page.page_type.value] += 1
 
                 # Execute merges in parallel with per-page locks
                 if merge_tasks:
@@ -511,7 +520,20 @@ async def process_batches_node(state: IngestState) -> IngestState:
     if len(cp.completed_batches) == total_batches:
         _delete_checkpoint(source_path)
 
-    result_state: IngestState = {"written_paths": all_written}
+    page_types: dict[str, int] = {}
+    for op_counter in op_counts.values():
+        for pt, count in op_counter.items():
+            page_types[pt] = page_types.get(pt, 0) + count
+
+    stats = IngestStats(
+        new=sum(op_counts.get("new", Counter()).values()),
+        merge=sum(op_counts.get("merge", Counter()).values()),
+        skip=sum(op_counts.get("skip", Counter()).values()),
+        skip_fuzzy_new=sum(op_counts.get("skip_fuzzy_new", Counter()).values()),
+        page_types=page_types,
+    )
+
+    result_state: IngestState = {"written_paths": all_written, "stats": stats}
     if errors:
         result_state["errors"] = errors
     return result_state
