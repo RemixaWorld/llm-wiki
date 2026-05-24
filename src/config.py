@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     query_temperature: float = 0.5
     max_chunk_tokens: int = 4000
     max_pages_per_ingest: int = 15
+    max_pages_per_type: int = Field(default=3, gt=0)
 
     # Checkpoint / resume
     checkpoint_dir: Path = Path(".wiki-checkpoints")
