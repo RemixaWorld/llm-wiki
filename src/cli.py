@@ -32,10 +32,16 @@ def main() -> None:
 @main.command()
 @click.argument("source")
 @click.option("--fresh", is_flag=True, help="Ignore checkpoint, start from scratch.")
-def ingest(source: str, fresh: bool) -> None:
+@click.option("--max-pages", default=None, type=int, help="Max concept/entity pages per type (default: 3).")
+def ingest(source: str, fresh: bool, max_pages: int | None) -> None:
     """Ingest a source file or URL into the wiki."""
+    import os
+
     from src.ingest import run_ingest
     from src.progress import RichIngestProgress
+
+    if max_pages is not None:
+        os.environ["WIKI_MAX_PAGES_PER_TYPE"] = str(max_pages)
 
     with RichIngestProgress() as progress:
         result = asyncio.run(run_ingest(source, fresh=fresh, progress_callback=progress))
@@ -118,14 +124,19 @@ def fetch(
 @main.command(name="ingest-all")
 @click.option("--glob", "pattern", default="*", help="Glob pattern to match source files.")
 @click.option("--fresh", is_flag=True, help="Ignore checkpoint, start from scratch.")
-def ingest_all(pattern: str, fresh: bool) -> None:
+@click.option("--max-pages", default=None, type=int, help="Max concept/entity pages per type (default: 3).")
+def ingest_all(pattern: str, fresh: bool, max_pages: int | None) -> None:
     """Ingest all matching files from the sources directory."""
+    import os
     from pathlib import Path
 
     from rich.console import Console
 
     from src.ingest import run_ingest
     from src.progress import RichIngestProgress, build_ingest_summary_table
+
+    if max_pages is not None:
+        os.environ["WIKI_MAX_PAGES_PER_TYPE"] = str(max_pages)
 
     settings = get_settings()
     sources = sorted(settings.sources_dir.glob(pattern))
