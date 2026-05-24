@@ -614,5 +614,22 @@ async def run_ingest(source_path: str, *, fresh: bool = False) -> IngestState:
         "errors": [],
     }
 
+    t0 = time.perf_counter()
     result = await app.ainvoke(initial_state)
+    elapsed = time.perf_counter() - t0
+
+    stats = result.get("stats") or IngestStats()
+    stats.duration_s = round(elapsed, 2)
+
+    logger.info(
+        "ingest complete source=%s duration=%.2fs new=%d merge=%d skip=%d skip_fuzzy_new=%d page_types=%s",
+        source_path,
+        stats.duration_s,
+        stats.new,
+        stats.merge,
+        stats.skip,
+        stats.skip_fuzzy_new,
+        stats.page_types,
+    )
+    result["stats"] = stats
     return result

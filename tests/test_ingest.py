@@ -1664,3 +1664,50 @@ class TestIngestStats:
         assert "errors" in result
         # Early return path doesn't set stats
         assert "stats" not in result or result.get("stats") is None
+
+
+class TestRunIngestStats:
+    @pytest.mark.asyncio
+    async def test_run_ingest_returns_stats_with_duration(
+        self,
+        sample_source: Path,
+        mock_ingest_result: IngestResult,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """run_ingest populates stats.duration_s and logs the summary."""
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        with (
+            patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm,
+            patch("src.ingest.logger") as mock_logger,
+        ):
+            mock_llm.return_value = mock_ingest_result
+            result = await run_ingest(str(sample_source))
+
+        stats = result.get("stats")
+        assert stats is not None
+        assert stats.duration_s >= 0
+        assert stats.new == 3
+
+        # Verify summary log was called
+        mock_logger.info.assert_any_call(
+            "ingest complete source=%s duration=%.2fs new=%d merge=%d skip=%d skip_fuzzy_new=%d page_types=%s",
+            str(sample_source),
+            stats.duration_s,
+            stats.new,
+            stats.merge,
+            stats.skip,
+            stats.skip_fuzzy_new,
+            stats.page_types,
+        )
+
+        src.config._settings = None
