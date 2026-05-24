@@ -1026,7 +1026,9 @@ class TestBatchCollisionFlow:
 
         # Summary written, FA merged, BERT exact SKIP → not written
         assert "errors" not in result or len(result.get("errors", [])) == 0
-        assert len(result["written_paths"]) == 2  # summary + merged FA (BERT exact skip not written)
+        assert (
+            len(result["written_paths"]) == 2
+        )  # summary + merged FA (BERT exact skip not written)
 
         src.config._settings = None
 
@@ -1272,7 +1274,10 @@ class TestParallelMerge:
         src.config._settings = None
 
         # Pre-create two existing pages
-        for title, body in [("Flash Attention", "# Flash Attention\n\nBody FA."), ("BERT", "# BERT\n\nBody BERT.")]:
+        for title, body in [
+            ("Flash Attention", "# Flash Attention\n\nBody FA."),
+            ("BERT", "# BERT\n\nBody BERT."),
+        ]:
             write_page(
                 WikiFrontmatter(
                     title=title,
@@ -1329,12 +1334,19 @@ class TestParallelMerge:
             ]
         )
         mock_patched_fa = PatchedPage(
-            edits=[EditOp(old_string="# Flash Attention\n\nBody FA.", new_string="# Flash Attention\n\nNew FA details.")],
+            edits=[
+                EditOp(
+                    old_string="# Flash Attention\n\nBody FA.",
+                    new_string="# Flash Attention\n\nNew FA details.",
+                )
+            ],
             tags_to_add=[],
             confidence=Confidence.HIGH,
         )
         mock_patched_bert = PatchedPage(
-            edits=[EditOp(old_string="# BERT\n\nBody BERT.", new_string="# BERT\n\nNew BERT details.")],
+            edits=[
+                EditOp(old_string="# BERT\n\nBody BERT.", new_string="# BERT\n\nNew BERT details.")
+            ],
             tags_to_add=[],
             confidence=Confidence.HIGH,
         )
@@ -1345,9 +1357,13 @@ class TestParallelMerge:
             idx = tracked_merge_llm.call_idx
             tracked_merge_llm.call_idx += 1
 
-            results = [mock_batch_decision,
-                       mock_patched_fa, BriefOutput(brief="FA brief."),
-                       mock_patched_bert, BriefOutput(brief="BERT brief.")]
+            results = [
+                mock_batch_decision,
+                mock_patched_fa,
+                BriefOutput(brief="FA brief."),
+                mock_patched_bert,
+                BriefOutput(brief="BERT brief."),
+            ]
             if idx < len(results):
                 return results[idx]
             return BriefOutput(brief="fallback")
@@ -1467,9 +1483,7 @@ class TestIngestStats:
             mock_merge_llm.side_effect = [
                 BatchCollisionDecision(
                     decisions=[
-                        CollisionDecision(
-                            new_title="BERT", action="MERGE", reason="new info"
-                        ),
+                        CollisionDecision(new_title="BERT", action="MERGE", reason="new info"),
                     ]
                 ),
                 mock_patched,
@@ -1664,6 +1678,95 @@ class TestIngestStats:
         assert "errors" in result
         # Early return path doesn't set stats
         assert "stats" not in result or result.get("stats") is None
+
+
+class TestIngestAllStats:
+    def test_ingest_all_aggregate_log(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ingest-all logs aggregate stats after all sources complete."""
+        from click.testing import CliRunner
+
+        from src.cli import main
+
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        sources_dir = tmp_path / "sources"
+        sources_dir.mkdir()
+        checkpoint_dir = tmp_path / "checkpoints"
+
+        # Create two source files
+        (sources_dir / "a.txt").write_text("Text about topic A.", encoding="utf-8")
+        (sources_dir / "b.txt").write_text("Text about topic B.", encoding="utf-8")
+
+        monkeypatch.setenv("WIKI_WIKI_DIR", str(wiki_dir))
+        monkeypatch.setenv("WIKI_SOURCES_DIR", str(sources_dir))
+        monkeypatch.setenv("WIKI_CHECKPOINT_DIR", str(checkpoint_dir))
+        import src.config
+
+        src.config._settings = None
+
+        mock_result_a = IngestResult(
+            source_summary=GeneratedPage(
+                title="Summary A",
+                page_type=PageType.SOURCE_SUMMARY,
+                tags=["a"],
+                confidence=Confidence.HIGH,
+                body="Summary A.",
+            ),
+            concept_pages=[],
+            entity_pages=[],
+        )
+        mock_result_b = IngestResult(
+            source_summary=GeneratedPage(
+                title="Summary B",
+                page_type=PageType.SOURCE_SUMMARY,
+                tags=["b"],
+                confidence=Confidence.HIGH,
+                body="Summary B.",
+            ),
+            concept_pages=[],
+            entity_pages=[],
+        )
+
+        call_count = 0
+
+        async def mock_llm_fn(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return mock_result_a
+            return mock_result_b
+
+        with (
+            patch("src.ingest.complete_structured", new_callable=AsyncMock) as mock_llm,
+            patch("src.cli.logger") as mock_logger,
+        ):
+            mock_llm.side_effect = mock_llm_fn
+            runner = CliRunner()
+            result = runner.invoke(main, ["ingest-all"])
+
+        assert result.exit_code == 0, result.output
+
+        # Find the aggregate log call
+        aggregate_calls = [
+            c
+            for c in mock_logger.info.call_args_list
+            if len(c.args) > 0 and "ingest-all complete" in c.args[0]
+        ]
+        assert len(aggregate_calls) == 1
+
+        call = aggregate_calls[0]
+        # sources=2, duration > 0, avg > 0, new=2, merge=0, skip=0, skip_fuzzy_new=0
+        assert call.args[1] == 2  # num_sources
+        assert call.args[2] > 0  # total_duration
+        assert call.args[3] > 0  # avg_duration
+        assert call.args[4] == 2  # total_new
+        assert call.args[5] == 0  # total_merge
+        assert call.args[6] == 0  # total_skip
+        assert call.args[7] == 0  # total_skip_fuzzy_new
+
+        src.config._settings = None
 
 
 class TestRunIngestStats:

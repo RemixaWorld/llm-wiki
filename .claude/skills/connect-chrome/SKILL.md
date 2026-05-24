@@ -1,0 +1,1 @@
+/Users/remixa/projects/llm-wiki/.claude/skills/gstack/connect-chrome/SKILL.md

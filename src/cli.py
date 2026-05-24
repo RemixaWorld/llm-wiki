@@ -143,8 +143,12 @@ def ingest_all(pattern: str, fresh: bool) -> None:
 
     total_pages = 0
     total_errors = 0
+    total_duration = 0.0
+    total_new = total_merge = total_skip = total_skip_fuzzy_new = 0
+    total_page_types: dict[str, int] = {}
+    num_sources_with_stats = 0
 
-    for src_path, result in zip(sources, results):
+    for src_path, result in zip(sources, results, strict=True):
         if isinstance(result, Exception):
             click.secho(f"  {src_path.name}: FAILED - {result}", fg="red")
             total_errors += 1
@@ -161,6 +165,33 @@ def ingest_all(pattern: str, fresh: bool) -> None:
             if written:
                 click.secho(f"  {src_path.name}: {len(written)} pages created", fg="green")
             total_pages += len(written)
+
+            # Aggregate stats
+            stats = result.get("stats")
+            if stats is not None:
+                num_sources_with_stats += 1
+                total_duration += stats.duration_s
+                total_new += stats.new
+                total_merge += stats.merge
+                total_skip += stats.skip
+                total_skip_fuzzy_new += stats.skip_fuzzy_new
+                for pt, count in stats.page_types.items():
+                    total_page_types[pt] = total_page_types.get(pt, 0) + count
+
+    if num_sources_with_stats > 0:
+        avg_duration = round(total_duration / num_sources_with_stats, 2)
+        logger.info(
+            "ingest-all complete sources=%d duration=%.2fs avg=%.2fs/source "
+            "new=%d merge=%d skip=%d skip_fuzzy_new=%d page_types=%s",
+            num_sources_with_stats,
+            total_duration,
+            avg_duration,
+            total_new,
+            total_merge,
+            total_skip,
+            total_skip_fuzzy_new,
+            total_page_types,
+        )
 
     click.echo()
     click.secho(
