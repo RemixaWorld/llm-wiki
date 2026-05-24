@@ -9,27 +9,10 @@ import httpx
 
 from src.config import get_settings
 from src.fetcher.content_extractor import extract_content
-from src.fetcher.substack_fetcher import SubstackAuth, fetch_substack
 from src.fetcher.types import FetchResult
-from src.fetcher.url_utils import SKIP_DOMAINS, is_medium_url, is_substack_url
+from src.fetcher.url_utils import SKIP_DOMAINS
 
 logger = logging.getLogger(__name__)
-
-
-def _build_substack_auth(cookies: dict[str, str] | None) -> SubstackAuth | None:
-    if not cookies:
-        return None
-    raw = cookies.get("substack.com", "")
-    sid = lli = ""
-    for pair in raw.split(";"):
-        pair = pair.strip()
-        if pair.startswith("substack.sid="):
-            sid = pair[len("substack.sid=") :]
-        elif pair.startswith("substack.lli="):
-            lli = pair[len("substack.lli=") :]
-    if sid:
-        return SubstackAuth(sid=sid, lli=lli)
-    return None
 
 
 async def fetch_urls(
@@ -40,7 +23,6 @@ async def fetch_urls(
     timeout: int = 30,
 ) -> list[FetchResult]:
     semaphore = asyncio.Semaphore(concurrency)
-    substack_auth = _build_substack_auth(cookies)
 
     settings = get_settings()
     proxy = settings.http_proxy or None
@@ -61,20 +43,6 @@ async def fetch_urls(
                         content=None,
                         domain=domain,
                         fetch_date=now,
-                    )
-
-                if is_substack_url(url):
-                    return await fetch_substack(url, auth=substack_auth, timeout=timeout)
-
-                if is_medium_url(url):
-                    return FetchResult(
-                        url=url,
-                        status="failed",
-                        title=None,
-                        content=None,
-                        domain=domain,
-                        fetch_date=now,
-                        error="403 Client Error: requires browser fetch for Medium",
                     )
 
                 headers: dict[str, str] = {}

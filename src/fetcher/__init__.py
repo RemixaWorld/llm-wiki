@@ -3,16 +3,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from src.config import get_settings
-from src.fetcher.browser_fetcher import fetch_with_browser
 from src.fetcher.cache import is_cached_ok, read_cache, write_cache
 from src.fetcher.content_filter import check_quality
 from src.fetcher.dedup import DedupIndex
 from src.fetcher.fetcher import fetch_urls
-from src.fetcher.medium_fetcher import extract_medium_content
 from src.fetcher.types import FetchResult
 from src.fetcher.url_collector import UrlSource, collect_urls
-from src.fetcher.url_utils import is_medium_url
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +30,6 @@ async def run_fetch(
     *,
     urls_file: str | None = None,
     retry_failed: bool = False,
-    use_browser: bool = False,
     concurrency: int = 10,
     cookies: dict[str, str] | None = None,
 ) -> list[FetchResult]:
@@ -92,64 +87,6 @@ async def run_fetch(
     for r in results:
         write_cache(r, web_dir)
 
-    # Browser retry: failed URLs + paywalled URLs (Beehiiv etc.) + explicit --browser
-    browser_needed = [
-        r
-        for r in results
-        if r.status in ("failed", "paywalled")
-        or (use_browser and r.status in ("low_quality",))
-    ]
-    if browser_needed:
-        try:
-            from playwright.async_api import async_playwright
-
-            from src.fetcher.browser_fetcher import parse_cookie_string
-
-            async with async_playwright() as p:
-                settings = get_settings()
-                browser = await p.chromium.launch(headless=True)
-                proxy = settings.http_proxy or None
-                for r in browser_needed:
-                    domain_cookies = None
-                    if cookies and r.domain in cookies:
-                        domain_cookies = parse_cookie_string(cookies[r.domain], r.domain)
-                    br = await fetch_with_browser(
-                        r.url, browser, cookies=domain_cookies, proxy=proxy
-                    )
-                    if br.status == "ok" and br.html:
-                        content = (
-                            extract_medium_content(br.html) if is_medium_url(r.url) else None
-                        )
-                        if content is None:
-                            from src.fetcher.content_extractor import extract_content
-
-                            from bs4 import BeautifulSoup
-
-                            soup = BeautifulSoup(br.html, "html.parser")
-                            post_div = soup.find("div", class_="rendered-post")
-                            if post_div:
-                                wrapped = (
-                                    "<html><body>"
-                                    f"{post_div.encode_contents().decode()}"
-                                    "</body></html>"
-                                )
-                                content = extract_content(wrapped, r.url)
-                            if not content:
-                                content = extract_content(br.html, r.url)
-                        if content:
-                            quality = check_quality(content)
-                            final_status = "ok" if quality.passed else "low_quality"
-                            updated = r.model_copy(
-                                update={"status": final_status, "content": content}
-                            )
-                            write_cache(updated, web_dir)
-                await browser.close()
-        except ImportError:
-            logger.warning(
-                "playwright not installed, skipping browser fetch. "
-                "Install with: uv pip install playwright && playwright install chromium"
-            )
-
     # Return all results (including previously cached)
     final: list[FetchResult] = []
     for u in collected:
@@ -159,12 +96,12 @@ async def run_fetch(
     return final
 
 
-async def fetch_single(url: str, web_dir: Path, *, use_browser: bool = False) -> FetchResult:
+async def fetch_single(url: str, web_dir: Path) -> FetchResult:
     """Fetch a single URL. Returns cached result if available, otherwise fetches."""
     cached = read_cache(url, web_dir)
     if cached and cached.status == "ok":
         return cached
-    results = await run_fetch([url], web_dir, use_browser=use_browser)
+    results = await run_fetch([url], web_dir)
     if results:
         return results[0]
     import datetime

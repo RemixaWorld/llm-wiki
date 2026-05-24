@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 
-from src.fetcher.fetcher import _build_substack_auth
 from src.fetcher.types import FetchResult
 
 
@@ -33,14 +31,6 @@ class TestFetchUrls:
 
         results = await fetch_urls(["https://reddit.com/r/test"])
         assert results[0].status == "unavailable"
-
-    @pytest.mark.asyncio
-    async def test_medium_marked_failed(self, mock_httpx_client):
-        from src.fetcher.fetcher import fetch_urls
-
-        results = await fetch_urls(["https://medium.com/test-article"])
-        assert results[0].status == "failed"
-        assert "browser" in results[0].error.lower()
 
     @pytest.mark.asyncio
     async def test_dead_url_404(self, mock_httpx_client):
@@ -74,33 +64,3 @@ class TestFetchUrls:
         with patch("src.fetcher.fetcher.asyncio.sleep", new_callable=AsyncMock):
             results = await fetch_urls(["https://example.com/fail"], max_retries=2)
         assert results[0].status == "failed"
-
-    @pytest.mark.asyncio
-    async def test_substack_routing(self, mock_httpx_client):
-        from src.fetcher.fetcher import fetch_urls
-
-        with patch("src.fetcher.fetcher.fetch_substack", new_callable=AsyncMock) as mock_sub:
-            mock_sub.return_value = FetchResult(
-                url="https://pub.substack.com/p/test",
-                status="ok",
-                content="hello",
-                domain="pub.substack.com",
-                fetch_date=datetime.now(),
-            )
-            results = await fetch_urls(["https://pub.substack.com/p/test"])
-        assert results[0].status == "ok"
-        mock_sub.assert_called_once()
-
-
-class TestBuildSubstackAuth:
-    def test_no_cookies(self):
-        assert _build_substack_auth(None) is None
-
-    def test_no_substack_cookie(self):
-        assert _build_substack_auth({"example.com": "foo=bar"}) is None
-
-    def test_valid_auth(self):
-        auth = _build_substack_auth({"substack.com": "substack.sid=abc; substack.lli=xyz"})
-        assert auth is not None
-        assert auth.sid == "abc"
-        assert auth.lli == "xyz"

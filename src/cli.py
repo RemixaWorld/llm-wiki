@@ -72,13 +72,11 @@ def ingest(source: str, fresh: bool, max_pages: int | None) -> None:
 @click.argument("urls", nargs=-1, required=True)
 @click.option("--urls-file", default=None, help="File with URLs, one per line.")
 @click.option("--retry-failed", is_flag=True, help="Re-fetch previously failed URLs.")
-@click.option("--browser", is_flag=True, help="Enable Playwright browser fallback.")
 @click.option("--concurrency", default=10, type=int, help="Max concurrent requests.")
 def fetch(
     urls: tuple[str, ...],
     urls_file: str | None,
     retry_failed: bool,
-    browser: bool,
     concurrency: int,
 ) -> None:
     """Fetch URL(s) and cache content to data/web/."""
@@ -93,7 +91,6 @@ def fetch(
             web_dir,
             urls_file=urls_file,
             retry_failed=retry_failed,
-            use_browser=browser,
             concurrency=concurrency,
         )
     )

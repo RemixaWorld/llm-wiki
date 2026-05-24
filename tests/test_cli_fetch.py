@@ -11,4 +11,3 @@ def test_fetch_help():
     assert result.exit_code == 0
     assert "urls-file" in result.output
     assert "retry-failed" in result.output
-    assert "browser" in result.output
