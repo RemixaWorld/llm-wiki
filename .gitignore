@@ -1,9 +1,8 @@
 # Wiki content (gitignored in template — user's knowledge base)
 wiki/*.md
 
-# Source files (gitignored in template — user's documents)
-sources/*
-!sources/.gitkeep
+# Web scraped content (external sources)
+data/web/
 
 # Python
 __pycache__/
@@ -20,7 +19,11 @@ build/
 .env
 .venv/
 
-# Personal guides (local only)
+# Cookies (browser auth tokens)
+cookies.json
+
+# Claude Code config (not meaningful for other editors)
+.claude/
 EXPERIMENT_GUIDE.md
 PROJECT_GUIDE.md
 RESEARCH_LOG.md
@@ -29,7 +32,12 @@ RESEARCH_LOG.md
 .DS_Store
 Thumbs.db
 
+# Project config
+CLAUDE.md
+
 # IDE
 .idea/
 .vscode/
 *.swp
+data/
+learnable_docs/
