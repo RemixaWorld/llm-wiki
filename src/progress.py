@@ -122,8 +122,6 @@ def build_ingest_summary_table(
         results: List of IngestState dicts or Exceptions (from asyncio.gather return_exceptions).
         durations: Per-file durations in seconds.
     """
-    from src.models import IngestStats
-
     table = Table(title="Ingest Summary")
     table.add_column("File", style="cyan")
     table.add_column("Pages", justify="right")
@@ -148,7 +146,7 @@ def build_ingest_summary_table(
             continue
 
         r = result  # type: ignore[union-attr]
-        stats: IngestStats | None = r.get("stats")  # type: ignore[union-attr]
+        stats = r.get("stats")  # type: ignore[union-attr]
         errors: list[str] = r.get("errors", [])  # type: ignore[union-attr]
         written: list[str] = r.get("written_paths", [])  # type: ignore[union-attr]
         pages = len(written)
