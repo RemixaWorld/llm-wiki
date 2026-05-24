@@ -7,7 +7,7 @@
 [![CI](https://github.com/t-timms/llm-wiki/actions/workflows/ci.yml/badge.svg)](https://github.com/t-timms/llm-wiki/actions/workflows/ci.yml)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-pipelines-purple?style=flat-square)](https://langchain-ai.github.io/langgraph/)
-[![Tests](https://img.shields.io/badge/tests-113_passing-brightgreen?style=flat-square)]()
+[![Tests](https://img.shields.io/badge/tests-316_passing-brightgreen?style=flat-square)]()
 [![Ruff](https://img.shields.io/badge/code%20style-ruff-black?style=flat-square&logo=ruff)](https://docs.astral.sh/ruff/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
@@ -62,8 +62,11 @@ wiki lint
 |---------|-------------|
 | `wiki ingest <file>` | Extract text, create wiki pages with collision detection |
 | `wiki ingest <file> --fresh` | Ignore checkpoint, start ingest from scratch |
+| `wiki ingest <file> --max-pages 5` | Limit concept/entity pages per type (default: 3) |
 | `wiki ingest --url <url>` | Ingest from URL |
 | `wiki ingest-all` | Batch ingest all files in sources/ with concurrency |
+| `wiki ingest-all --max-pages 5` | Limit pages per type for batch ingest |
+| `wiki fetch <urls...>` | Fetch URL(s) and cache content to data/web/ |
 | `wiki query "<question>"` | Search wiki, synthesize answer with citations |
 | `wiki lint` | Find orphans, broken links, missing fields |
 | `wiki stats` | Page count, link density, tag distribution |
@@ -97,6 +100,7 @@ graph LR
 | `src/search.py` | BM25 index (rank-bm25) + BriefIndex for fuzzy title dedup |
 | `src/ingest.py` | LangGraph: extract→chunk→batch process→merge collisions→write→update links |
 | `src/query.py` | LangGraph: search→retrieve→synthesize→optionally persist |
+| `src/progress.py` | Rich-based progress display for ingest pipeline |
 | `src/lint.py` | Sync checks: orphans, broken refs, stale, missing fields |
 | `src/merge.py` | Page merge: patch-first with fallback rewrite |
 | `src/patch.py` | Edit/patch application with fuzzy string matching |
@@ -108,6 +112,10 @@ graph LR
 ```
 source file → extract text → chunk → batch process (LLM) → collision detection → merge or create → write markdown
 ```
+
+**Progress Display:** The ingest pipeline shows real-time progress with Rich — pipeline stages for single-file mode, file-level progress for `ingest-all`, and a summary table on completion.
+
+**Configurable Page Limits:** Control how many concept and entity pages the LLM generates per type with `--max-pages` (default: 3) or `WIKI_MAX_PAGES_PER_TYPE` env var.
 
 **Checkpoint/Resume:** Interrupted ingests can resume from last completed batch. Use `--fresh` to ignore checkpoints.
 
@@ -172,8 +180,9 @@ WIKI_SOURCES_DIR=sources       # Source files directory
 WIKI_SCHEMA_PATH=schema.yaml    # LLM behavior config
 WIKI_MAX_CHUNK_TOKENS=4000      # Max tokens per chunk
 WIKI_MAX_PAGES_PER_INGEST=15    # Max pages per source
+WIKI_MAX_PAGES_PER_TYPE=3       # Max concept/entity pages per type
 WIKI_BATCH_SIZE=5               # Pages per LLM call
-WIKI_MAX_CONCURRENT_LLM=3       # Concurrency for ingest-all
+WIKI_MAX_CONCURRENT_LLM=4       # Concurrency for ingest-all
 WIKI_LOG_LEVEL=INFO             # DEBUG, INFO, WARNING, ERROR
 ```
 
