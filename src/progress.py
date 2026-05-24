@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Protocol
 
 from rich.console import Console
@@ -67,13 +68,17 @@ class RichIngestProgress:
         )
         self._stage_task_id: int | None = None
         self._batch_task_id: int | None = None
+        self._prev_log_level: int = logging.INFO
 
     def __enter__(self) -> RichIngestProgress:
+        self._prev_log_level = logging.getLogger().level
+        logging.getLogger().setLevel(logging.WARNING)
         self._progress.start()
         return self
 
     def __exit__(self, *args: object) -> None:
         self._progress.stop()
+        logging.getLogger().setLevel(self._prev_log_level)
 
     def on_stage(self, stage: str) -> None:
         if not self._show_stages:
