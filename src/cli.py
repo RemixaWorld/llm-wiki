@@ -35,10 +35,14 @@ def main() -> None:
 def ingest(source: str, fresh: bool) -> None:
     """Ingest a source file or URL into the wiki."""
     from src.ingest import run_ingest
+    from src.progress import RichIngestProgress
 
-    result = asyncio.run(run_ingest(source, fresh=fresh))
+    with RichIngestProgress() as progress:
+        result = asyncio.run(run_ingest(source, fresh=fresh, progress_callback=progress))
+
     errors = result.get("errors", [])
     written = result.get("written_paths", [])
+    stats = result.get("stats")
 
     if errors:
         click.secho(f"Errors: {len(errors)}", fg="red")
@@ -46,9 +50,16 @@ def ingest(source: str, fresh: bool) -> None:
             click.echo(f"  - {err}")
         raise SystemExit(1)
 
-    click.secho(f"Created {len(written)} pages:", fg="green")
-    for p in written:
-        click.echo(f"  wiki/{p}")
+    pages_count = len(written)
+    duration = f"{stats.duration_s:.1f}s" if stats else "?"
+    ops = []
+    if stats:
+        if stats.new:
+            ops.append(f"new={stats.new}")
+        if stats.merge:
+            ops.append(f"merge={stats.merge}")
+    ops_str = f" ({', '.join(ops)})" if ops else ""
+    click.secho(f"Created {pages_count} pages in {duration}{ops_str}", fg="green")
 
 
 @main.command()
@@ -109,10 +120,12 @@ def fetch(
 @click.option("--fresh", is_flag=True, help="Ignore checkpoint, start from scratch.")
 def ingest_all(pattern: str, fresh: bool) -> None:
     """Ingest all matching files from the sources directory."""
-
     from pathlib import Path
 
+    from rich.console import Console
+
     from src.ingest import run_ingest
+    from src.progress import RichIngestProgress, build_ingest_summary_table
 
     settings = get_settings()
     sources = sorted(settings.sources_dir.glob(pattern))
@@ -122,82 +135,49 @@ def ingest_all(pattern: str, fresh: bool) -> None:
         click.secho(f"No files matching '{pattern}' in {settings.sources_dir}/", fg="yellow")
         return
 
-    click.echo(
-        f"Found {len(sources)} source(s) to ingest (concurrency={settings.max_concurrent_llm})."
-    )
+    total = len(sources)
+    completed_count = 0
 
     async def _ingest_all_concurrent() -> list:
+        nonlocal completed_count
         semaphore = asyncio.Semaphore(settings.max_concurrent_llm)
 
         async def _ingest_one(src_path: Path):
+            nonlocal completed_count
             async with semaphore:
-                click.echo(f"\nIngesting: {src_path.name}")
-                return await run_ingest(str(src_path), fresh=fresh)
+                result = await run_ingest(str(src_path), fresh=fresh)
+            completed_count += 1
+            progress.on_file_progress(src_path.name, completed_count, total)
+            return result
 
         return await asyncio.gather(
             *[_ingest_one(s) for s in sources],
             return_exceptions=True,
         )
 
-    results = asyncio.run(_ingest_all_concurrent())
+    with RichIngestProgress(show_stages=False) as progress:
+        results = asyncio.run(_ingest_all_concurrent())
 
+    # Build and print summary table
+    durations = []
     total_pages = 0
     total_errors = 0
-    total_duration = 0.0
-    total_new = total_merge = total_skip = total_skip_fuzzy_new = 0
-    total_page_types: dict[str, int] = {}
-    num_sources_with_stats = 0
-
-    for src_path, result in zip(sources, results, strict=True):
+    for result in results:
         if isinstance(result, Exception):
-            click.secho(f"  {src_path.name}: FAILED - {result}", fg="red")
+            durations.append(0.0)
             total_errors += 1
         else:
-            written = result.get("written_paths", [])
-            errors = result.get("errors", [])
-
-            if errors:
-                click.secho(f"  {src_path.name}: {len(errors)} error(s)", fg="red")
-                for err in errors:
-                    click.echo(f"    - {err}")
-                total_errors += len(errors)
-
-            if written:
-                click.secho(f"  {src_path.name}: {len(written)} pages created", fg="green")
-            total_pages += len(written)
-
-            # Aggregate stats
             stats = result.get("stats")
-            if stats is not None:
-                num_sources_with_stats += 1
-                total_duration += stats.duration_s
-                total_new += stats.new
-                total_merge += stats.merge
-                total_skip += stats.skip
-                total_skip_fuzzy_new += stats.skip_fuzzy_new
-                for pt, count in stats.page_types.items():
-                    total_page_types[pt] = total_page_types.get(pt, 0) + count
+            durations.append(stats.duration_s if stats else 0.0)
+            total_pages += len(result.get("written_paths", []))
+            total_errors += len(result.get("errors", []))
 
-    if num_sources_with_stats > 0:
-        avg_duration = round(total_duration / num_sources_with_stats, 2)
-        logger.info(
-            "ingest-all complete sources=%d duration=%.2fs avg=%.2fs/source "
-            "new=%d merge=%d skip=%d skip_fuzzy_new=%d page_types=%s",
-            num_sources_with_stats,
-            total_duration,
-            avg_duration,
-            total_new,
-            total_merge,
-            total_skip,
-            total_skip_fuzzy_new,
-            total_page_types,
-        )
+    console = Console(stderr=True)
+    table = build_ingest_summary_table([s.name for s in sources], results, durations)
+    console.print(table)
 
-    click.echo()
-    click.secho(
-        f"Done: {total_pages} pages created, {total_errors} errors",
-        fg="green" if not total_errors else "yellow",
-    )
+    if total_errors:
+        raise SystemExit(1)
 
 
 @main.command()
