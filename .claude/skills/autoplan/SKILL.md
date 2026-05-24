@@ -1,1 +1,0 @@
-/Users/remixa/projects/llm-wiki/.claude/skills/gstack/autoplan/SKILL.md

@@ -1,1 +1,0 @@
-/Users/remixa/projects/llm-wiki/.claude/skills/gstack/open-gstack-browser/SKILL.md
