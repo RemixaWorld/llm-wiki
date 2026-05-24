@@ -270,3 +270,33 @@ class TestBatchCollisionModels:
         assert len(decision.decisions) == 2
         assert decision.decisions[0].action == "MERGE"
         assert decision.decisions[1].action == "SKIP"
+
+
+class TestIngestStats:
+    def test_create_with_defaults(self) -> None:
+        from src.models import IngestStats
+
+        stats = IngestStats()
+        assert stats.duration_s == 0.0
+        assert stats.new == 0
+        assert stats.merge == 0
+        assert stats.skip == 0
+        assert stats.skip_fuzzy_new == 0
+        assert stats.page_types == {}
+
+    def test_create_with_values(self) -> None:
+        from src.models import IngestStats
+
+        stats = IngestStats(
+            duration_s=12.34,
+            new=5,
+            merge=2,
+            skip=1,
+            skip_fuzzy_new=0,
+            page_types={"concept": 4, "entity": 2, "source_summary": 1},
+        )
+        assert stats.duration_s == 12.34
+        assert stats.new == 5
+        assert stats.merge == 2
+        assert stats.skip == 1
+        assert stats.page_types == {"concept": 4, "entity": 2, "source_summary": 1}

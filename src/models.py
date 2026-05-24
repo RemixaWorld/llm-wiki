@@ -216,3 +216,14 @@ class ExtractedSource(BaseModel):
     source_type: str = Field(description="pdf | url | text | markdown")
     title: str
     metadata: dict[str, str] = Field(default_factory=dict)
+
+
+class IngestStats(BaseModel):
+    """Statistics from a single source ingest run."""
+
+    duration_s: float = 0.0
+    new: int = 0
+    merge: int = 0
+    skip: int = 0
+    skip_fuzzy_new: int = 0
+    page_types: dict[str, int] = {}
