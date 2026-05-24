@@ -26,6 +26,7 @@ from src.models import (
     WikiFrontmatter,
     WikiPage,
 )
+from src.progress import ProgressCallback
 from src.search import BriefIndex
 from src.wiki import (
     extract_wikilinks,
@@ -109,6 +110,7 @@ class IngestState(TypedDict, total=False):
     updated_pages: list[str]
     errors: list[str]
     stats: IngestStats
+    progress_callback: ProgressCallback | None
 
 
 # ── Batch helpers ────────────────────────────────────────────────────────────
@@ -236,6 +238,9 @@ def _check_fuzzy_collision(
 
 async def extract_text_node(state: IngestState) -> IngestState:
     """Extract text from the source file or URL."""
+    cb = state.get("progress_callback")
+    if cb is not None:
+        cb.on_stage("extract")
     try:
         source = state["source_path"]
         if source.startswith(("http://", "https://")):
@@ -265,6 +270,9 @@ async def extract_text_node(state: IngestState) -> IngestState:
 
 async def chunk_source_node(state: IngestState) -> IngestState:
     """Chunk the extracted text into LLM-sized pieces."""
+    cb = state.get("progress_callback")
+    if cb is not None:
+        cb.on_stage("chunk")
     text = state.get("extracted_text", "")
     if not text:
         return {"errors": state.get("errors", []) + ["no text to chunk"]}
@@ -277,6 +285,9 @@ async def chunk_source_node(state: IngestState) -> IngestState:
 
 async def process_batches_node(state: IngestState) -> IngestState:
     """Process chunks in batches with checkpoint-based resume and brief analysis."""
+    cb = state.get("progress_callback")
+    if cb is not None:
+        cb.on_stage("process")
     chunks = state.get("chunks", [])
     if not chunks:
         return {"errors": state.get("errors", []) + ["no chunks to process"]}
@@ -510,6 +521,8 @@ async def process_batches_node(state: IngestState) -> IngestState:
                 total_batches,
                 len(batch_titles),
             )
+            if cb is not None:
+                cb.on_batch_progress(batch_idx + 1, total_batches)
 
         except Exception as exc:
             logger.error("batch failed batch=%d/%d", batch_idx + 1, total_batches, exc_info=True)
@@ -541,6 +554,9 @@ async def process_batches_node(state: IngestState) -> IngestState:
 
 async def update_links_node(state: IngestState) -> IngestState:
     """Scan written pages for [[wikilinks]] and update related fields."""
+    cb = state.get("progress_callback")
+    if cb is not None:
+        cb.on_stage("update_links")
     settings = get_settings()
     written = state.get("written_paths", [])
     updated: list[str] = []
@@ -603,7 +619,12 @@ def build_ingest_graph() -> StateGraph:
     return graph
 
 
-async def run_ingest(source_path: str, *, fresh: bool = False) -> IngestState:
+async def run_ingest(
+    source_path: str,
+    *,
+    fresh: bool = False,
+    progress_callback: ProgressCallback | None = None,
+) -> IngestState:
     """Run the full ingest pipeline on a source."""
     graph = build_ingest_graph()
     app = graph.compile()
@@ -612,6 +633,7 @@ async def run_ingest(source_path: str, *, fresh: bool = False) -> IngestState:
         "source_path": source_path,
         "fresh": fresh,
         "errors": [],
+        "progress_callback": progress_callback,
     }
 
     t0 = time.perf_counter()
@@ -632,4 +654,6 @@ async def run_ingest(source_path: str, *, fresh: bool = False) -> IngestState:
         stats.page_types,
     )
     result["stats"] = stats
+    if progress_callback is not None:
+        progress_callback.on_summary(stats, elapsed, result.get("errors", []))
     return result
